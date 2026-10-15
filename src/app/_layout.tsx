@@ -1,18 +1,37 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import React, { useEffect } from 'react';
+import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { isSupabaseConfigured, supabase } from '@/services/supabase';
+import { useWardrobeStore } from '@/store/wardrobeStore';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+export default function RootLayout() {
+  const initializeWardrobe = useWardrobeStore((state) => state.initializeWardrobe);
+  const fetchClothingItems = useWardrobeStore((state) => state.fetchClothingItems);
 
-SplashScreen.preventAutoHideAsync();
+  useEffect(() => {
+    // 1. Initialize local cache and check session
+    initializeWardrobe();
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+    // 2. Listen to Supabase auth state changes if configured
+    if (isSupabaseConfigured && supabase) {
+      const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (session?.user) {
+          fetchClothingItems();
+        }
+      });
+
+      return () => {
+        authListener.subscription.unsubscribe();
+      };
+    }
+  }, [initializeWardrobe, fetchClothingItems]);
+
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+    <>
+      <StatusBar style="dark" />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      </Stack>
+    </>
   );
 }

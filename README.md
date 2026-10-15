@@ -1,56 +1,77 @@
-# Welcome to your Expo app 👋
+# WearWise — AI Smart Wardrobe & Outfit Planner
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+WearWise is a modern mobile digital wardrobe and intelligent outfit planner built with React Native, Expo, TypeScript, and Supabase.
 
-## Get started
+---
 
-1. Install dependencies
+## Phase 2: Digital Wardrobe & Supabase Integration
 
-   ```bash
-   npm install
-   ```
+Phase 2 introduces a complete digital wardrobe ingestion and persistent storage pipeline:
 
-2. Start the app
+1. **Native Camera & Gallery Ingestion:**
+   - Capture photos directly using the device camera (`expo-image-picker`).
+   - Select photos from the device library with aspect ratio cropping.
+   - Built-in image optimization (`expo-image-manipulator`) resizing large uploads to 1200px max JPEG at 82% quality.
+2. **Structured Clothing Metadata:**
+   - Category (`Shirts`, `T-shirts`, `Trousers`, `Jeans`, `Shorts`, `Jackets and outerwear`, `Dresses and ethnic wear`, `Shoes and footwear`, `Accessories`).
+   - Subcategory, Primary Color, Pattern (`plain`, `striped`, `checked`, `printed`, `other`).
+   - Style (`casual`, `formal`, `sporty`, `ethnic`, `other`), Season (`summer`, `winter`, `monsoon`, `all-season`).
+   - Formality level (1 to 5), Brand, Notes.
+   - Availability Status (`available`, `laundry`, `unavailable`).
+   - Wear counter (`times_worn`) and last worn timestamp (`last_worn_at`).
+3. **Supabase Cloud Persistence:**
+   - PostgreSQL `clothing_items` table with Row Level Security (RLS) strictly scoped to `auth.uid()`.
+   - Private `wardrobe-images` Storage bucket storing encrypted garment images under `{user_id}/{item_id}.jpg`.
+   - Dynamic 7-day signed URLs for rendering private images securely.
+4. **Offline & Demo Mode Fallback:**
+   - If Supabase credentials are not configured, WearWise runs in **Local Demo Mode** using AsyncStorage caching.
+   - Items persist across app reboots without pretending data has been saved remotely.
+5. **Interactive Wardrobe Management:**
+   - Search by clothing name, color, brand, or subcategory.
+   - Category filter pills with live item count badges.
+   - Availability status filter (`All`, `Available`, `In Laundry`, `Stored Away`).
+   - Sort by *Recently Added*, *Most Worn*, or *Name (A-Z)*.
+   - Pull-to-refresh and empty onboarding states.
+   - Item detail sheet with in-place editing, quick laundry toggles, and safe deletion with storage cleanup.
+6. **Dashboard Integration:**
+   - Real-time statistics: Total Pieces, Available Items, Items in Laundry, Never-Worn count, Coverage %, and Recently Added carousel.
 
-   ```bash
-   npx expo start
-   ```
+---
 
-In the output, you'll find options to open the app in a
+## Running the Application
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
+### 1. Install dependencies
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+### 2. Configure Supabase (Optional)
+Copy `.env.example` to `.env`:
+```bash
+cp .env.example .env
+```
+Fill in your Supabase project URL and Anon key. Run the SQL migration from [`supabase/migrations/20261015000000_create_clothing_items_and_storage.sql`](./supabase/migrations/20261015000000_create_clothing_items_and_storage.sql) in your Supabase SQL editor.
 
-### Other setup steps
+### 3. Start Expo Dev Server
+```bash
+# Start server
+npx expo start
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+# Or directly in web browser:
+npx expo start --web
 
-## Learn more
+# Or on mobile device (using Expo Go):
+npx expo start
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+### 4. Run Tests & Validation
+```bash
+# Automated Phase 2 test suite (metadata, filtering, availability, RLS)
+node scripts/test-phase2.js
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+# TypeScript typecheck
+npx tsc --noEmit
 
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+# ESLint
+npx expo lint
+```
