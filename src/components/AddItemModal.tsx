@@ -13,13 +13,20 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import {
+  AlertTriangle,
   Camera,
   Check,
   ImageIcon,
+  Info,
   RefreshCw,
+  Sparkles,
   UploadCloud,
   X,
 } from 'lucide-react-native';
+import {
+  analyzeClothingWithVision,
+  isVisionAIAvailable,
+} from '@/services/visionService';
 import { Colors, Radius, Spacing, Typography } from '@/theme/colors';
 import {
   AvailabilityStatus,
@@ -29,6 +36,7 @@ import {
   ClothingStyle,
   CreateClothingItemInput,
 } from '@/types/wardrobe';
+import { optimizeClothingImage } from '@/utils/imageUtils';
 
 interface AddItemModalProps {
   visible: boolean;
@@ -57,37 +65,67 @@ const PRESET_SAMPLE_PHOTOS = [
   {
     name: 'Oxford Button-Down',
     category: 'Shirts' as ClothingCategory,
+    subcategory: 'Button-Down Shirt',
     color: 'Pure White',
+    pattern: 'plain' as ClothingPattern,
+    style: 'formal' as ClothingStyle,
+    season: 'all-season' as ClothingSeason,
+    formality: 3,
     url: 'https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?auto=format&fit=crop&w=600&q=80',
   },
   {
     name: 'Heavyweight Supima Tee',
     category: 'T-shirts' as ClothingCategory,
+    subcategory: 'Crewneck Tee',
     color: 'Sand Beige',
+    pattern: 'plain' as ClothingPattern,
+    style: 'casual' as ClothingStyle,
+    season: 'summer' as ClothingSeason,
+    formality: 2,
     url: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=600&q=80',
   },
   {
     name: 'Single Pleat Trousers',
     category: 'Trousers' as ClothingCategory,
+    subcategory: 'Pleated Chinos',
     color: 'Oatmeal',
+    pattern: 'plain' as ClothingPattern,
+    style: 'formal' as ClothingStyle,
+    season: 'all-season' as ClothingSeason,
+    formality: 4,
     url: 'https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?auto=format&fit=crop&w=600&q=80',
   },
   {
     name: 'Raw Selvedge Denim',
     category: 'Jeans' as ClothingCategory,
+    subcategory: 'Straight-leg Jeans',
     color: 'Deep Indigo',
+    pattern: 'plain' as ClothingPattern,
+    style: 'casual' as ClothingStyle,
+    season: 'all-season' as ClothingSeason,
+    formality: 2,
     url: 'https://images.unsplash.com/photo-1542272604-780c96856592?auto=format&fit=crop&w=600&q=80',
   },
   {
     name: 'Minimal White Sneakers',
     category: 'Shoes and footwear' as ClothingCategory,
+    subcategory: 'Low-top Sneakers',
     color: 'Off-White',
+    pattern: 'plain' as ClothingPattern,
+    style: 'casual' as ClothingStyle,
+    season: 'all-season' as ClothingSeason,
+    formality: 2,
     url: 'https://images.unsplash.com/photo-1560769629-975ec94e6a86?auto=format&fit=crop&w=600&q=80',
   },
   {
     name: 'Harrington Bomber',
     category: 'Jackets and outerwear' as ClothingCategory,
+    subcategory: 'Lightweight Bomber',
     color: 'Midnight Navy',
+    pattern: 'plain' as ClothingPattern,
+    style: 'casual' as ClothingStyle,
+    season: 'winter' as ClothingSeason,
+    formality: 3,
     url: 'https://images.unsplash.com/photo-1551028719-00167b16eac5?auto=format&fit=crop&w=600&q=80',
   },
 ];
@@ -98,6 +136,9 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   onAdd,
 }) => {
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
+  const [cachedBase64, setCachedBase64] = useState<string | null>(null);
+
+  // Form Fields
   const [name, setName] = useState('');
   const [category, setCategory] = useState<ClothingCategory>('Shirts');
   const [subcategory, setSubcategory] = useState('');
@@ -110,8 +151,102 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   const [notes, setNotes] = useState('');
   const [availabilityStatus, setAvailabilityStatus] = useState<AvailabilityStatus>('available');
 
+  // AI Recognition & Processing State
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [aiDetected, setAiDetected] = useState(false);
+  const [aiNotice, setAiNotice] = useState<string | null>(null);
+  const [aiNoticeType, setAiNoticeType] = useState<'success' | 'info' | 'warning' | null>(null);
+
   const [isUploading, setIsUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  /**
+   * Run Vision AI recognition on an image
+   */
+  const runVisionAnalysis = async (uri: string, base64?: string) => {
+    setIsAnalyzing(true);
+    setErrorMessage('');
+    setAiNotice(null);
+    setAiNoticeType(null);
+
+    try {
+      const hasKey = isVisionAIAvailable();
+      if (!hasKey) {
+        setIsAnalyzing(false);
+        setAiDetected(false);
+        setAiNotice(
+          'Vision AI API key is not configured (add EXPO_PUBLIC_GEMINI_API_KEY in .env). Please enter garment details manually below.'
+        );
+        setAiNoticeType('info');
+        return;
+      }
+
+      const result = await analyzeClothingWithVision({
+        base64: base64 || undefined,
+        uri,
+      });
+
+      if (result.success && result.data) {
+        // Automatically fill detected details into the form
+        setCategory(result.data.category);
+        setPrimaryColor(result.data.primaryColor);
+        setPattern(result.data.pattern);
+        setStyle(result.data.style);
+        setSeason(result.data.season);
+        setFormality(result.data.formality);
+
+        if (result.data.name) setName(result.data.name);
+        if (result.data.subcategory) setSubcategory(result.data.subcategory);
+        if (result.data.brand) setBrand(result.data.brand);
+
+        setAiDetected(true);
+        setAiNotice(
+          `✨ AI Identified: ${result.data.category} in ${result.data.primaryColor} (${result.data.pattern}, ${result.data.style}, ${result.data.season}). Review and edit any field below.`
+        );
+        setAiNoticeType('success');
+      } else if (result.isUnavailable) {
+        setAiDetected(false);
+        setAiNotice(
+          'Vision AI is unavailable. Please enter garment details manually below.'
+        );
+        setAiNoticeType('info');
+      } else {
+        setAiDetected(false);
+        setAiNotice(
+          result.error ||
+            'AI recognition could not identify this garment. Please fill in the details manually below.'
+        );
+        setAiNoticeType('warning');
+      }
+    } catch (err: unknown) {
+      console.warn('[AddItemModal] Vision analysis failed:', err);
+      setAiDetected(false);
+      setAiNotice('AI recognition encountered an issue. You can enter all details manually below.');
+      setAiNoticeType('warning');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  /**
+   * Process and optimize an image after picking/capturing
+   */
+  const handleImagePicked = async (uri: string) => {
+    try {
+      setSelectedImageUri(uri);
+      // Optimize image right away to get resized JPEG and base64
+      const optimized = await optimizeClothingImage(uri);
+      setSelectedImageUri(optimized.uri);
+      setCachedBase64(optimized.base64 || null);
+
+      // Trigger Vision AI analysis
+      await runVisionAnalysis(optimized.uri, optimized.base64);
+    } catch (err) {
+      console.warn('[AddItemModal] Image optimization error:', err);
+      // Fallback: analyze original uri
+      await runVisionAnalysis(uri);
+    }
+  };
 
   // 1. Pick photo from phone photo library
   const pickFromGallery = async () => {
@@ -124,14 +259,14 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.85,
       });
 
       if (!result.canceled && result.assets?.[0]?.uri) {
-        setSelectedImageUri(result.assets[0].uri);
+        await handleImagePicked(result.assets[0].uri);
       }
     } catch (err) {
       console.warn('Gallery pick error:', err);
@@ -156,7 +291,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
       });
 
       if (!result.canceled && result.assets?.[0]?.uri) {
-        setSelectedImageUri(result.assets[0].uri);
+        await handleImagePicked(result.assets[0].uri);
       }
     } catch (err) {
       console.warn('Camera error:', err);
@@ -164,8 +299,29 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
     }
   };
 
+  // 3. Choose a preset sample
+  const handleSelectPreset = (preset: typeof PRESET_SAMPLE_PHOTOS[number]) => {
+    setSelectedImageUri(preset.url);
+    setCachedBase64(null);
+    setName(preset.name);
+    setCategory(preset.category);
+    setSubcategory(preset.subcategory);
+    setPrimaryColor(preset.color);
+    setPattern(preset.pattern);
+    setStyle(preset.style);
+    setSeason(preset.season);
+    setFormality(preset.formality);
+
+    setAiDetected(true);
+    setAiNotice(
+      `✨ Auto-filled: ${preset.category} in ${preset.color} (${preset.pattern}, ${preset.style}, ${preset.season}). Review and edit details below.`
+    );
+    setAiNoticeType('success');
+  };
+
   const handleReset = () => {
     setSelectedImageUri(null);
+    setCachedBase64(null);
     setName('');
     setCategory('Shirts');
     setSubcategory('');
@@ -179,6 +335,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
     setAvailabilityStatus('available');
     setErrorMessage('');
     setIsUploading(false);
+    setIsAnalyzing(false);
+    setAiDetected(false);
+    setAiNotice(null);
+    setAiNoticeType(null);
   };
 
   const handleSubmit = async () => {
@@ -235,10 +395,13 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             <View>
               <Text style={styles.modalTitle}>Add Clothing</Text>
               <Text style={styles.modalSubtitle}>
-                Add to your persistent digital wardrobe
+                AI-powered garment recognition & digital cataloging
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} disabled={isUploading}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeBtn}
+              disabled={isUploading || isAnalyzing}>
               <X size={20} color={Colors.text} />
             </TouchableOpacity>
           </View>
@@ -253,25 +416,101 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
               </View>
             ) : null}
 
+            {/* AI Vision Notice / Status Banner */}
+            {aiNotice ? (
+              <View
+                style={[
+                  styles.aiNoticeCard,
+                  aiNoticeType === 'success'
+                    ? styles.aiNoticeSuccess
+                    : aiNoticeType === 'warning'
+                    ? styles.aiNoticeWarning
+                    : styles.aiNoticeInfo,
+                ]}>
+                <View style={styles.aiNoticeIconWrapper}>
+                  {aiNoticeType === 'success' ? (
+                    <Sparkles size={16} color={Colors.accent} />
+                  ) : aiNoticeType === 'warning' ? (
+                    <AlertTriangle size={16} color={Colors.warning} />
+                  ) : (
+                    <Info size={16} color={Colors.textSecondary} />
+                  )}
+                </View>
+                <View style={styles.aiNoticeTextWrapper}>
+                  <Text
+                    style={[
+                      styles.aiNoticeText,
+                      aiNoticeType === 'success'
+                        ? styles.aiNoticeTextSuccess
+                        : aiNoticeType === 'warning'
+                        ? styles.aiNoticeTextWarning
+                        : styles.aiNoticeTextInfo,
+                    ]}>
+                    {aiNotice}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+
             {/* Photo Capture & Preview Section */}
-            <Text style={styles.inputLabel}>GARMENT PHOTO</Text>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.inputLabel}>GARMENT PHOTO *</Text>
+              {aiDetected && (
+                <View style={styles.aiBadgePill}>
+                  <Sparkles size={11} color={Colors.accent} />
+                  <Text style={styles.aiBadgePillText}>AI Analyzed</Text>
+                </View>
+              )}
+            </View>
+
             {selectedImageUri ? (
               <View style={styles.previewContainer}>
                 <Image source={{ uri: selectedImageUri }} style={styles.previewImage} />
-                <View style={styles.previewActions}>
-                  <TouchableOpacity
-                    style={styles.changePhotoBtn}
-                    onPress={pickFromGallery}>
-                    <RefreshCw size={14} color={Colors.text} />
-                    <Text style={styles.changePhotoText}>Change</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.removePhotoBtn}
-                    onPress={() => setSelectedImageUri(null)}>
-                    <X size={14} color={Colors.danger} />
-                    <Text style={styles.removePhotoText}>Remove</Text>
-                  </TouchableOpacity>
-                </View>
+
+                {/* Loading overlay during AI analysis */}
+                {isAnalyzing && (
+                  <View style={styles.analyzingOverlay}>
+                    <ActivityIndicator size="large" color={Colors.accent} />
+                    <View style={styles.analyzingContent}>
+                      <View style={styles.analyzingTitleRow}>
+                        <Sparkles size={16} color={Colors.accent} />
+                        <Text style={styles.analyzingTitle}>Vision AI Analyzing...</Text>
+                      </View>
+                      <Text style={styles.analyzingSub}>
+                        Identifying category, color, pattern, style & season
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* Photo action controls */}
+                {!isAnalyzing && (
+                  <View style={styles.previewActions}>
+                    <TouchableOpacity
+                      style={styles.changePhotoBtn}
+                      onPress={() => runVisionAnalysis(selectedImageUri, cachedBase64 || undefined)}>
+                      <Sparkles size={13} color={Colors.accent} />
+                      <Text style={styles.changePhotoText}>Re-analyze</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.changePhotoBtn}
+                      onPress={pickFromGallery}>
+                      <RefreshCw size={13} color={Colors.text} />
+                      <Text style={styles.changePhotoText}>Change</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.removePhotoBtn}
+                      onPress={() => {
+                        setSelectedImageUri(null);
+                        setCachedBase64(null);
+                        setAiDetected(false);
+                        setAiNotice(null);
+                      }}>
+                      <X size={13} color={Colors.danger} />
+                      <Text style={styles.removePhotoText}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
             ) : (
               <View style={styles.captureButtonsRow}>
@@ -283,7 +522,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                     <Camera size={24} color={Colors.primary} />
                   </View>
                   <Text style={styles.captureTitle}>Take Photo</Text>
-                  <Text style={styles.captureSub}>Use phone camera</Text>
+                  <Text style={styles.captureSub}>With AI auto-detection</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -294,7 +533,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                     <ImageIcon size={24} color={Colors.primary} />
                   </View>
                   <Text style={styles.captureTitle}>Photo Library</Text>
-                  <Text style={styles.captureSub}>Pick from album</Text>
+                  <Text style={styles.captureSub}>Scan gallery garment</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -310,12 +549,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                 return (
                   <TouchableOpacity
                     key={idx}
-                    onPress={() => {
-                      setSelectedImageUri(preset.url);
-                      setCategory(preset.category);
-                      if (!name) setName(preset.name);
-                      if (!primaryColor) setPrimaryColor(preset.color);
-                    }}
+                    onPress={() => handleSelectPreset(preset)}
                     style={[
                       styles.presetCard,
                       isSelected ? styles.presetCardSelected : null,
@@ -332,7 +566,12 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             </ScrollView>
 
             {/* Category selection */}
-            <Text style={styles.inputLabel}>CATEGORY *</Text>
+            <View style={styles.fieldLabelRow}>
+              <Text style={styles.inputLabel}>CATEGORY *</Text>
+              {aiDetected && (
+                <Text style={styles.fieldAiTag}>AI detected</Text>
+              )}
+            </View>
             <View style={styles.categoryChips}>
               {CATEGORIES.map((cat) => {
                 const isCatSelected = category === cat;
@@ -359,7 +598,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             </View>
 
             {/* Item Name */}
-            <Text style={styles.inputLabel}>ITEM NAME *</Text>
+            <View style={styles.fieldLabelRow}>
+              <Text style={styles.inputLabel}>ITEM NAME *</Text>
+              {aiDetected && <Text style={styles.fieldAiTag}>Editable</Text>}
+            </View>
             <TextInput
               style={styles.input}
               placeholder="e.g. Oxford Cotton Button-Down"
@@ -379,7 +621,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             />
 
             {/* Primary Color */}
-            <Text style={styles.inputLabel}>PRIMARY COLOR</Text>
+            <View style={styles.fieldLabelRow}>
+              <Text style={styles.inputLabel}>PRIMARY COLOR</Text>
+              {aiDetected && <Text style={styles.fieldAiTag}>AI detected</Text>}
+            </View>
             <TextInput
               style={styles.input}
               placeholder="e.g. Chalk White, Navy Blue, Dark Olive"
@@ -389,7 +634,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             />
 
             {/* Pattern */}
-            <Text style={styles.inputLabel}>PATTERN</Text>
+            <View style={styles.fieldLabelRow}>
+              <Text style={styles.inputLabel}>PATTERN</Text>
+              {aiDetected && <Text style={styles.fieldAiTag}>AI detected</Text>}
+            </View>
             <View style={styles.categoryChips}>
               {PATTERNS.map((p) => (
                 <TouchableOpacity
@@ -411,7 +659,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             </View>
 
             {/* Style */}
-            <Text style={styles.inputLabel}>STYLE</Text>
+            <View style={styles.fieldLabelRow}>
+              <Text style={styles.inputLabel}>STYLE</Text>
+              {aiDetected && <Text style={styles.fieldAiTag}>AI detected</Text>}
+            </View>
             <View style={styles.categoryChips}>
               {STYLES.map((s) => (
                 <TouchableOpacity
@@ -433,7 +684,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             </View>
 
             {/* Season */}
-            <Text style={styles.inputLabel}>SEASON</Text>
+            <View style={styles.fieldLabelRow}>
+              <Text style={styles.inputLabel}>SUITABLE SEASON</Text>
+              {aiDetected && <Text style={styles.fieldAiTag}>AI detected</Text>}
+            </View>
             <View style={styles.categoryChips}>
               {SEASONS.map((se) => (
                 <TouchableOpacity
@@ -523,15 +777,22 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={handleSubmit}
-              disabled={isUploading || !selectedImageUri || !name.trim()}
+              disabled={isUploading || isAnalyzing || !selectedImageUri || !name.trim()}
               style={[
                 styles.saveButton,
-                (!selectedImageUri || !name.trim() || isUploading) ? styles.saveButtonDisabled : null,
+                (!selectedImageUri || !name.trim() || isUploading || isAnalyzing)
+                  ? styles.saveButtonDisabled
+                  : null,
               ]}>
               {isUploading ? (
                 <>
                   <ActivityIndicator color={Colors.textInverse} size="small" />
                   <Text style={styles.saveButtonText}>Saving Garment...</Text>
+                </>
+              ) : isAnalyzing ? (
+                <>
+                  <ActivityIndicator color={Colors.textInverse} size="small" />
+                  <Text style={styles.saveButtonText}>Analyzing Image...</Text>
                 </>
               ) : (
                 <>
@@ -600,13 +861,89 @@ const styles = StyleSheet.create({
     color: Colors.danger,
     fontWeight: '600',
   },
+  aiNoticeCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+  },
+  aiNoticeSuccess: {
+    backgroundColor: Colors.accentSubtle,
+    borderColor: '#E8DCC2',
+  },
+  aiNoticeWarning: {
+    backgroundColor: Colors.warningLight,
+    borderColor: '#F3E0B5',
+  },
+  aiNoticeInfo: {
+    backgroundColor: Colors.surfaceSecondary,
+    borderColor: Colors.border,
+  },
+  aiNoticeIconWrapper: {
+    marginTop: 1,
+  },
+  aiNoticeTextWrapper: {
+    flex: 1,
+  },
+  aiNoticeText: {
+    fontSize: Typography.fontSize.xs,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  aiNoticeTextSuccess: {
+    color: '#6E5224',
+  },
+  aiNoticeTextWarning: {
+    color: Colors.warning,
+  },
+  aiNoticeTextInfo: {
+    color: Colors.textSecondary,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  aiBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.accentSubtle,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radius.round,
+    borderWidth: 1,
+    borderColor: '#E8DCC2',
+  },
+  aiBadgePillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.accent,
+  },
+  fieldLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  fieldAiTag: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.accent,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
   inputLabel: {
     fontSize: 10,
     fontWeight: '800',
     color: Colors.textSecondary,
     letterSpacing: 0.8,
-    marginBottom: Spacing.sm,
-    marginTop: Spacing.md,
   },
   captureButtonsRow: {
     flexDirection: 'row',
@@ -656,6 +993,37 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  analyzingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(28, 26, 24, 0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.xl,
+    gap: Spacing.md,
+  },
+  analyzingContent: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  analyzingTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  analyzingTitle: {
+    fontSize: Typography.fontSize.base,
+    fontWeight: '700',
+    color: Colors.textInverse,
+  },
+  analyzingSub: {
+    fontSize: Typography.fontSize.xs,
+    color: 'rgba(255, 255, 255, 0.75)',
+    textAlign: 'center',
+  },
   previewActions: {
     position: 'absolute',
     bottom: Spacing.sm,
@@ -671,6 +1039,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: Radius.round,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
   },
   changePhotoText: {
     fontSize: Typography.fontSize.xs,
@@ -685,6 +1055,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: Radius.round,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
   },
   removePhotoText: {
     fontSize: Typography.fontSize.xs,
@@ -695,6 +1067,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Spacing.sm,
     paddingBottom: Spacing.xs,
+    marginTop: Spacing.xs,
   },
   presetCard: {
     width: 64,
