@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Image,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,18 +15,12 @@ import {
   Palette,
   Sparkles,
 } from 'lucide-react-native';
-import { AuthModal } from '@/components/AuthModal';
 import { Header } from '@/components/Header';
-import { isSupabaseConfigured } from '@/services/supabase';
 import { useWardrobeStore } from '@/store/wardrobeStore';
 import { Colors, Radius, Spacing, Typography } from '@/theme/colors';
 
 export default function ProfileScreen() {
-  const [authModalVisible, setAuthModalVisible] = useState(false);
   const user = useWardrobeStore((state) => state.user);
-  const sessionUser = useWardrobeStore((state) => state.sessionUser);
-  const signOut = useWardrobeStore((state) => state.signOut);
-  const refreshWardrobe = useWardrobeStore((state) => state.refreshWardrobe);
   const getStats = useWardrobeStore((state) => state.getStats);
   const updateUserProfile = useWardrobeStore(
     (state) => state.updateUserProfile
@@ -183,85 +176,21 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* Cloud Sync & Account */}
-        <Text style={styles.sectionHeading}>CLOUD SYNC & BACKUP</Text>
-        <View style={styles.card}>
-          <View style={styles.settingRow}>
-            <View style={styles.settingLeft}>
-              <View style={styles.settingIconWrap}>
-                <Sparkles
-                  size={18}
-                  color={sessionUser ? Colors.success : isSupabaseConfigured ? '#8A5D0E' : Colors.textMuted}
-                />
-              </View>
-              <View style={{ flex: 1, paddingRight: Spacing.sm }}>
-                <Text style={styles.settingTitle}>
-                  {sessionUser
-                    ? 'Cloud Synced'
-                    : isSupabaseConfigured
-                    ? 'Supabase Cloud Ready'
-                    : 'Local Demo Mode'}
-                </Text>
-                <Text style={styles.settingSub}>
-                  {sessionUser
-                    ? sessionUser.email
-                    : isSupabaseConfigured
-                    ? 'Sign in or create an account to sync your wardrobe with Postgres'
-                    : 'Saved locally. Add Supabase keys to .env for multi-device sync'}
-                </Text>
-              </View>
-            </View>
-            {sessionUser ? (
-              <TouchableOpacity
-                style={[styles.syncBtn, { backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border }]}
-                onPress={signOut}>
-                <Text style={[styles.syncBtnText, { color: Colors.danger }]}>Sign Out</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={styles.syncBtn}
-                onPress={() => setAuthModalVisible(true)}>
-                <Text style={styles.syncBtnText}>
-                  {isSupabaseConfigured ? 'Sign In' : 'Setup'}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-
         {/* App Version Info */}
         <View style={styles.footerInfo}>
-          <Text style={styles.footerVersion}>WearWise v2.0.0 (Phase 2 Build)</Text>
+          <Text style={styles.footerVersion}>WearWise v2.0.0</Text>
           <Text style={styles.footerSub}>
-            AI Smart Wardrobe & Outfit Planner
+            AI Smart Wardrobe &amp; Outfit Planner
           </Text>
         </View>
       </ScrollView>
-
-      {/* Auth Modal */}
-      <AuthModal
-        visible={authModalVisible}
-        onClose={() => setAuthModalVisible(false)}
-        onAuthSuccess={() => {
-          refreshWardrobe();
-        }}
-      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  syncBtn: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: Radius.round,
-  },
-  syncBtnText: {
-    color: Colors.textInverse,
-    fontSize: Typography.fontSize.xs,
-    fontWeight: '700',
-  },
+
+
   safeArea: {
     flex: 1,
     backgroundColor: Colors.background,

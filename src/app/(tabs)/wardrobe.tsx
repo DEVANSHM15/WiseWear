@@ -13,7 +13,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   AlertCircle,
   ArrowUpDown,
-  CheckCircle2,
   Filter,
   Plus,
   RefreshCw,
@@ -22,12 +21,10 @@ import {
   X,
 } from 'lucide-react-native';
 import { AddItemModal } from '@/components/AddItemModal';
-import { AuthModal } from '@/components/AuthModal';
 import { CategoryFilterBar } from '@/components/CategoryFilterBar';
 import { ClothingCard } from '@/components/ClothingCard';
 import { ClothingDetailModal } from '@/components/ClothingDetailModal';
 import { Header } from '@/components/Header';
-import { isSupabaseConfigured } from '@/services/supabase';
 import { useWardrobeStore } from '@/store/wardrobeStore';
 import { Colors, Radius, Spacing, Typography } from '@/theme/colors';
 import {
@@ -58,13 +55,11 @@ const AVAILABILITY_FILTERS: { label: string; value: AvailabilityStatus | 'All' }
 
 export default function WardrobeScreen() {
   const [addModalVisible, setAddModalVisible] = useState(false);
-  const [authModalVisible, setAuthModalVisible] = useState(false);
   const [detailItem, setDetailItem] = useState<ClothingItem | null>(null);
 
   const items = useWardrobeStore((state) => state.items);
   const isLoading = useWardrobeStore((state) => state.isLoading);
   const error = useWardrobeStore((state) => state.error);
-  const sessionUser = useWardrobeStore((state) => state.sessionUser);
   
   const searchQuery = useWardrobeStore((state) => state.searchQuery);
   const selectedCategory = useWardrobeStore((state) => state.selectedCategory);
@@ -163,35 +158,6 @@ export default function WardrobeScreen() {
           </TouchableOpacity>
         }
       />
-
-      {/* Cloud Sync / Guest Mode Banner */}
-      {sessionUser ? (
-        <View style={styles.connectedBanner}>
-          <CheckCircle2 size={13} color={Colors.success} />
-          <Text style={styles.connectedBannerText}>
-            Cloud Synced • {sessionUser.email || 'Supabase Connected'}
-          </Text>
-        </View>
-      ) : isSupabaseConfigured ? (
-        <View style={styles.demoBanner}>
-          <Sparkles size={13} color="#8A5D0E" />
-          <Text style={styles.demoBannerText}>
-            Guest Mode: Sign in to sync your wardrobe with Supabase Cloud
-          </Text>
-          <TouchableOpacity
-            onPress={() => setAuthModalVisible(true)}
-            style={styles.bannerActionBtn}>
-            <Text style={styles.bannerActionBtnText}>Sign In</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={styles.demoBanner}>
-          <Sparkles size={13} color="#8A5D0E" />
-          <Text style={styles.demoBannerText}>
-            Demo Mode: Wardrobe persisted locally. Add Supabase keys to .env for multi-device cloud sync.
-          </Text>
-        </View>
-      )}
 
       {/* Error state alert if any */}
       {error ? (
@@ -372,15 +338,6 @@ export default function WardrobeScreen() {
         onDelete={async (id) => {
           await deleteClothingItem(id);
           setDetailItem(null);
-        }}
-      />
-
-      {/* Cloud Auth Modal */}
-      <AuthModal
-        visible={authModalVisible}
-        onClose={() => setAuthModalVisible(false)}
-        onAuthSuccess={() => {
-          refreshWardrobe();
         }}
       />
     </SafeAreaView>

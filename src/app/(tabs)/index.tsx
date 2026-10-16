@@ -22,16 +22,13 @@ import {
   WashingMachine,
 } from 'lucide-react-native';
 import { AddItemModal } from '@/components/AddItemModal';
-import { AuthModal } from '@/components/AuthModal';
 import { OutfitCard } from '@/components/OutfitCard';
 import { StatCard } from '@/components/StatCard';
-import { isSupabaseConfigured } from '@/services/supabase';
 import { useWardrobeStore } from '@/store/wardrobeStore';
 import { Colors, Radius, Spacing, Typography } from '@/theme/colors';
 
 export default function HomeScreen() {
   const [modalVisible, setModalVisible] = useState(false);
-  const [authModalVisible, setAuthModalVisible] = useState(false);
 
   const user = useWardrobeStore((state) => state.user);
   const items = useWardrobeStore((state) => state.items);
@@ -56,32 +53,6 @@ export default function HomeScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}>
-        {/* Top User Header */}
-        <View style={styles.header}>
-          <View style={styles.userInfo}>
-            <Text style={styles.dateText}>Tuesday, October 15</Text>
-            <Text style={styles.greeting}>Good morning, {user.name.split(' ')[0]}</Text>
-          </View>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => setAuthModalVisible(true)}
-            style={styles.avatarButton}>
-            <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Demo Mode / Cloud Sync Pill */}
-        {!isSupabaseConfigured && (
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => setAuthModalVisible(true)}
-            style={styles.demoPill}>
-            <Sparkles size={13} color="#8A5D0E" />
-            <Text style={styles.demoPillText}>
-              Running in Local Demo Mode • Tap to configure Supabase Cloud Sync
-            </Text>
-          </TouchableOpacity>
-        )}
 
         {/* Weather & Context Pill */}
         <View style={styles.contextPill}>
@@ -313,12 +284,6 @@ export default function HomeScreen() {
         visible={modalVisible}
         onClose={() => setModalVisible(false)}
         onAdd={addClothingItem}
-      />
-
-      {/* Auth Modal */}
-      <AuthModal
-        visible={authModalVisible}
-        onClose={() => setAuthModalVisible(false)}
       />
     </SafeAreaView>
   );

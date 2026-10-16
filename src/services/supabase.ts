@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { decode } from 'base64-arraybuffer';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   ClothingCategory,
@@ -49,7 +50,8 @@ export const supabase: SupabaseClient | null = isSupabaseConfigured
 export async function uploadGarmentPhoto(
   userId: string,
   itemId: string,
-  fileUri: string
+  fileUri: string,
+  base64Data?: string
 ): Promise<{ path: string; signedUrl: string }> {
   if (!supabase) {
     throw new Error('Supabase client is not configured.');
@@ -57,19 +59,27 @@ export async function uploadGarmentPhoto(
 
   const filePath = `${userId}/${itemId}.jpg`;
 
-  // Read file as blob for React Native upload
-  const response = await fetch(fileUri);
-  const blob = await response.blob();
+  let arrayBuffer: ArrayBuffer;
+
+  if (base64Data) {
+    // 100% reliable in React Native Expo: direct base64-to-ArrayBuffer decode
+    arrayBuffer = decode(base64Data);
+  } else {
+    // Fallback: fetch binary arrayBuffer directly
+    const response = await fetch(fileUri);
+    arrayBuffer = await response.arrayBuffer();
+  }
 
   const { error: uploadError } = await supabase.storage
     .from('wardrobe-images')
-    .upload(filePath, blob, {
+    .upload(filePath, arrayBuffer, {
       contentType: 'image/jpeg',
       upsert: true,
     });
 
   if (uploadError) {
-    throw uploadError;
+    console.error('[supabase] Storage upload failed:', uploadError);
+    throw new Error(uploadError.message || 'Image upload failed');
   }
 
   // Generate an authenticated signed URL (valid for 7 days)

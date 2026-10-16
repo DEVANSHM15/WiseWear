@@ -1,7 +1,6 @@
 import { safeStorage } from '@/utils/safeStorage';
 import { create } from 'zustand';
 import {
-  INITIAL_CLOTHING_ITEMS,
   INITIAL_USER_PROFILE,
   INITIAL_WEEKLY_PLAN,
 } from '@/data/mockData';
@@ -30,6 +29,17 @@ import { optimizeClothingImage } from '@/utils/imageUtils';
 
 const STORAGE_CACHE_KEY = '@wearwise_wardrobe_items_v2';
 const DEMO_USER_ID = 'demo-user-wearwise-local';
+
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 interface WardrobeState {
   items: ClothingItem[];
@@ -151,7 +161,7 @@ export function buildOutfitFromItems(items: ClothingItem[]): Outfit | null {
 }
 
 export const useWardrobeStore = create<WardrobeState>((set, get) => ({
-  items: INITIAL_CLOTHING_ITEMS,
+  items: [],
   outfits: [],
   todayOutfit: null,
   weeklyPlan: INITIAL_WEEKLY_PLAN,
@@ -262,10 +272,10 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     set({ isSubmitting: true, error: null });
 
     let uploadedPath = '';
-    const itemId = `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const itemId = generateUUID();
 
     try {
-      // 1. Optimize image (compress, resize to 1200px max)
+      // 1. Optimize image (compress, resize to 1200px max, pre-calculate base64)
       const optimized = await optimizeClothingImage(input.imageUri);
 
       // Check if Supabase configured & active user
@@ -275,7 +285,12 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
 
         if (userId) {
           // 2. Upload to Storage: user-id/item-id.jpg
-          const { path, signedUrl } = await uploadGarmentPhoto(userId, itemId, optimized.uri);
+          const { path, signedUrl } = await uploadGarmentPhoto(
+            userId,
+            itemId,
+            optimized.uri,
+            optimized.base64
+          );
           uploadedPath = path;
 
           // 3. Insert into Postgres
@@ -401,11 +416,6 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     const previousItems = get().items;
     const target = previousItems.find((i) => i.id === id);
 
-    // Optimistic removal
-    set((state) => ({
-      items: state.items.filter((i) => i.id !== id),
-    }));
-
     try {
       if (isSupabaseConfigured && supabase && target?.userId && target.userId !== DEMO_USER_ID) {
         // Delete row in Postgres
@@ -417,13 +427,14 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
         }
       }
 
-      // Update local storage cache
-      const updated = get().items;
-      await safeStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(updated));
-      set({ isSubmitting: false });
+      // Remove from state AND persist cache atomically (same pattern as add/update)
+      set((state) => {
+        const updated = state.items.filter((i) => i.id !== id);
+        safeStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(updated)).catch(() => {});
+        return { items: updated, isSubmitting: false };
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to delete clothing item.';
-      // Rollback
       set({ items: previousItems, error: msg, isSubmitting: false });
       throw err;
     }
