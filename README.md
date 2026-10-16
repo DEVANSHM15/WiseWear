@@ -69,9 +69,31 @@ npx expo start
 # Automated Phase 2 test suite (metadata, filtering, availability, RLS)
 node scripts/test-phase2.js
 
+# Automated Phase 3 test suite (Vision AI attribute recognition & constraints)
+node scripts/test-phase3.js
+
 # TypeScript typecheck
 npx tsc --noEmit
 
 # ESLint
 npx expo lint
 ```
+
+---
+
+## Phase 3: Vision AI Garment Recognition
+
+Phase 3 introduces automatic visual recognition of uploaded clothing photos:
+
+1. **Vision AI Analysis:**
+   - Detects clothing `category`, `primaryColor`, `pattern`, `style`, and `season` using Google Gemini Vision (`gemini-1.5-flash` / `gemini-2.0-flash`) or OpenAI (`gpt-4o-mini`).
+   - Normalizes all detected values against strict PostgreSQL database check constraints.
+2. **Auto-Fill & User Review:**
+   - Automatically populates the Add Clothing form with detected attributes.
+   - Allows users to review, edit, and adjust any field prior to saving.
+3. **Graceful Fallback & Loading State:**
+   - Displays real-time loading indicators during AI analysis.
+   - If AI is unavailable (no API key configured) or recognition fails, provides clear user notices and unlocks full manual entry.
+4. **Cloud & Local Persistence:**
+   - Saves confirmed metadata and optimized photo to Supabase storage & database (or local storage in guest mode).
+
