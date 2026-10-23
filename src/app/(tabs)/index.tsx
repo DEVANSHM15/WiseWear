@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   Image,
   ScrollView,
   StyleSheet,
@@ -33,6 +34,7 @@ export default function HomeScreen() {
   const user = useWardrobeStore((state) => state.user);
   const items = useWardrobeStore((state) => state.items);
   const todayOutfit = useWardrobeStore((state) => state.todayOutfit);
+  const isGeneratingOutfit = useWardrobeStore((state) => state.isGeneratingOutfit);
   const getStats = useWardrobeStore((state) => state.getStats);
   const saveOutfit = useWardrobeStore((state) => state.saveOutfit);
   const markOutfitAsWorn = useWardrobeStore((state) => state.markOutfitAsWorn);
@@ -236,9 +238,16 @@ export default function HomeScreen() {
           {isTodayOutfitValid && (
             <TouchableOpacity
               onPress={generateAnotherOutfit}
-              style={styles.shuffleLink}>
-              <Sparkles size={14} color={Colors.accent} />
-              <Text style={styles.shuffleLinkText}>Shuffle Look</Text>
+              disabled={isGeneratingOutfit}
+              style={[styles.shuffleLink, isGeneratingOutfit && { opacity: 0.6 }]}>
+              {isGeneratingOutfit ? (
+                <ActivityIndicator size="small" color={Colors.accent} />
+              ) : (
+                <Sparkles size={14} color={Colors.accent} />
+              )}
+              <Text style={styles.shuffleLinkText}>
+                {isGeneratingOutfit ? 'Styling...' : 'Shuffle Look'}
+              </Text>
             </TouchableOpacity>
           )}
         </View>

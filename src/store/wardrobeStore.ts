@@ -26,6 +26,7 @@ import {
   WardrobeStats,
 } from '@/types/wardrobe';
 import { optimizeClothingImage } from '@/utils/imageUtils';
+import { buildFallbackOutfit, generateAIOutfit } from '@/services/aiStylistService';
 
 const STORAGE_CACHE_KEY = '@wearwise_wardrobe_items_v2';
 const DEMO_USER_ID = 'demo-user-wearwise-local';
@@ -51,6 +52,7 @@ interface WardrobeState {
   // Status flags
   isLoading: boolean;
   isSubmitting: boolean;
+  isGeneratingOutfit: boolean;
   error: string | null;
   isDemoMode: boolean;
   sessionUser: { id: string; email?: string } | null;
@@ -77,7 +79,7 @@ interface WardrobeState {
   toggleLaundry: (id: string) => void;
   saveOutfit: (outfitId: string) => void;
   markOutfitAsWorn: (outfitId: string) => void;
-  generateAnotherOutfit: () => void;
+  generateAnotherOutfit: () => Promise<Outfit | null>;
   generateWeeklyPlan: () => void;
   markDayAsWorn: (date: string) => void;
   
@@ -98,67 +100,7 @@ interface WardrobeState {
 /**
  * Dynamically builds an outfit strictly from the user's available clothing items
  */
-export function buildOutfitFromItems(items: ClothingItem[]): Outfit | null {
-  const availableItems = items.filter(
-    (i) => i.availabilityStatus !== 'laundry' && i.availabilityStatus !== 'unavailable'
-  );
-  const pool = availableItems.length >= 2 ? availableItems : items;
-  if (pool.length < 2) return null;
-
-  const tops = pool.filter((i) => i.category === 'Shirts' || i.category === 'T-shirts');
-  const bottoms = pool.filter(
-    (i) => i.category === 'Trousers' || i.category === 'Jeans' || i.category === 'Shorts'
-  );
-  const dresses = pool.filter((i) => i.category === 'Dresses and ethnic wear');
-  const shoes = pool.filter((i) => i.category === 'Shoes and footwear');
-  const jackets = pool.filter((i) => i.category === 'Jackets and outerwear');
-
-  let combo: ClothingItem[] = [];
-
-  if (tops.length > 0 && bottoms.length > 0) {
-    const unwornTops = tops.filter((i) => i.timesWorn === 0);
-    const chosenTop =
-      unwornTops.length > 0
-        ? unwornTops[Math.floor(Math.random() * unwornTops.length)]
-        : tops[Math.floor(Math.random() * tops.length)];
-
-    const unwornBottoms = bottoms.filter((i) => i.timesWorn === 0);
-    const chosenBottom =
-      unwornBottoms.length > 0
-        ? unwornBottoms[Math.floor(Math.random() * unwornBottoms.length)]
-        : bottoms[Math.floor(Math.random() * bottoms.length)];
-
-    combo = [chosenTop, chosenBottom];
-  } else if (dresses.length > 0) {
-    combo = [dresses[Math.floor(Math.random() * dresses.length)]];
-  } else if (pool.length >= 2) {
-    combo = [pool[0], pool[1]];
-  } else {
-    return null;
-  }
-
-  if (shoes.length > 0) combo.push(shoes[Math.floor(Math.random() * shoes.length)]);
-  if (jackets.length > 0) combo.push(jackets[Math.floor(Math.random() * jackets.length)]);
-
-  const unwornCount = combo.filter((i) => i.timesWorn === 0).length;
-  const score = Math.min(99, 88 + unwornCount * 4 + Math.floor(Math.random() * 4));
-
-  return {
-    id: `outfit-curated-${Date.now()}`,
-    name: unwornCount > 0 ? 'Unworn Spotlight Look' : 'Curated Closet Harmony',
-    description: `Tailored ensemble pairing ${combo.map((c) => c.name).join(' and ')}.`,
-    items: combo,
-    compatibilityScore: score,
-    styleVibe: combo[0]?.style || 'Modern Minimalist',
-    occasion: 'Everyday Versatile',
-    isSaved: false,
-    isWorn: false,
-    stylistNote:
-      unwornCount > 0
-        ? `Prioritizes ${unwornCount} never-worn piece(s) in your wardrobe to increase your closet utilization!`
-        : `Balanced palette generated from your personal clothes.`,
-  };
-}
+export const buildOutfitFromItems = buildFallbackOutfit;
 
 export const useWardrobeStore = create<WardrobeState>((set, get) => ({
   items: [],
@@ -169,6 +111,7 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
 
   isLoading: false,
   isSubmitting: false,
+  isGeneratingOutfit: false,
   error: null,
   isDemoMode: !isSupabaseConfigured,
   sessionUser: null,
@@ -519,15 +462,26 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     safeStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(updatedItems)).catch(() => {});
   },
 
-  generateAnotherOutfit: () => {
+  generateAnotherOutfit: async () => {
     const { items } = get();
-    const newGenerated = buildOutfitFromItems(items);
-    if (!newGenerated) return;
+    set({ isGeneratingOutfit: true });
+    try {
+      const newGenerated = await generateAIOutfit(items);
+      if (!newGenerated) {
+        set({ isGeneratingOutfit: false });
+        return null;
+      }
 
-    set((state) => ({
-      todayOutfit: newGenerated,
-      outfits: [newGenerated, ...state.outfits],
-    }));
+      set((state) => ({
+        isGeneratingOutfit: false,
+        todayOutfit: newGenerated,
+        outfits: [newGenerated, ...state.outfits.filter((o) => o.id !== newGenerated.id)],
+      }));
+      return newGenerated;
+    } catch {
+      set({ isGeneratingOutfit: false });
+      return null;
+    }
   },
 
   generateWeeklyPlan: () => {

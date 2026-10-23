@@ -378,16 +378,24 @@ async function callGeminiVision(
   signal: AbortSignal
 ): Promise<Record<string, unknown>> {
   const models = [
-    'gemini-3.8-flash',
-    'gemini-3.5-flash-lite',
     'gemini-3.5-flash',
-    'gemini-flash-latest',
-    'gemini-2.5-flash',
-    'gemini-1.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-3.6-flash',
   ];
   let lastError: Error | null = null;
 
   for (const model of models) {
+    if (signal.aborted) {
+      throw new Error('Vision AI request was cancelled or timed out.');
+    }
+
+    const perModelController = new AbortController();
+    const perModelTimeout = setTimeout(() => perModelController.abort(), 12000);
+
+    const onExternalAbort = () => perModelController.abort();
+    signal.addEventListener('abort', onExternalAbort, { once: true });
+
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
@@ -419,13 +427,16 @@ async function callGeminiVision(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
-        signal,
+        signal: perModelController.signal,
       });
+
+      clearTimeout(perModelTimeout);
+      signal.removeEventListener('abort', onExternalAbort);
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');
         throw new Error(
-          `Gemini API HTTP ${response.status}: ${errorText || response.statusText}`
+          `Gemini API HTTP ${response.status} (${model}): ${errorText || response.statusText}`
         );
       }
 
@@ -434,25 +445,21 @@ async function callGeminiVision(
         resJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
       if (!rawText) {
-        throw new Error('Gemini returned an empty response.');
+        throw new Error(`Gemini (${model}) returned an empty response.`);
       }
 
       return parseJsonFromText(rawText);
     } catch (err: unknown) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        throw err;
+      clearTimeout(perModelTimeout);
+      signal.removeEventListener('abort', onExternalAbort);
+
+      if (signal.aborted) {
+        throw new Error('Vision AI request was cancelled or timed out.');
       }
+
       lastError = err instanceof Error ? err : new Error(String(err));
-      // Try next model if 404, 503, not found, or retired
-      if (
-        lastError.message.includes('404') ||
-        lastError.message.includes('503') ||
-        lastError.message.includes('not found') ||
-        lastError.message.includes('no longer available')
-      ) {
-        continue;
-      }
-      break;
+      console.warn(`[visionService] Model ${model} failed, trying next:`, lastError.message);
+      continue;
     }
   }
 
@@ -576,7 +583,7 @@ export async function analyzeClothingWithVision(params: {
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
-    params.timeoutMs || 18000 // 18 seconds default timeout
+    params.timeoutMs || 35000 // 35 seconds timeout for slower mobile connections
   );
 
   try {
@@ -642,14 +649,18 @@ export async function analyzeClothingWithVision(params: {
   } catch (err: unknown) {
     clearTimeout(timeoutId);
 
-    if (err instanceof Error && err.name === 'AbortError') {
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      (err instanceof Error && err.name === 'AbortError') ||
+      message.toLowerCase().includes('canceled') ||
+      message.toLowerCase().includes('cancelled')
+    ) {
       return {
         success: false,
-        error: 'Vision AI request timed out. Please check your internet connection or enter details manually.',
+        error: 'Vision AI request was cancelled or timed out. You can enter details manually below.',
       };
     }
 
-    const message = err instanceof Error ? err.message : String(err);
     console.warn('[visionService] AI recognition error:', message);
 
     return {

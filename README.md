@@ -72,6 +72,9 @@ node scripts/test-phase2.js
 # Automated Phase 3 test suite (Vision AI attribute recognition & constraints)
 node scripts/test-phase3.js
 
+# Automated Phase 4 test suite (AI Outfit Stylist & anti-repetition rules)
+node scripts/test-phase4.js
+
 # TypeScript typecheck
 npx tsc --noEmit
 
@@ -86,7 +89,7 @@ npx expo lint
 Phase 3 introduces automatic visual recognition of uploaded clothing photos:
 
 1. **Vision AI Analysis:**
-   - Detects clothing `category`, `primaryColor`, `pattern`, `style`, and `season` using Google Gemini Vision (`gemini-1.5-flash` / `gemini-2.0-flash`) or OpenAI (`gpt-4o-mini`).
+   - Detects clothing `category`, `primaryColor`, `pattern`, `style`, and `season` using Google Gemini Vision (`gemini-3.8-flash` / `gemini-3.5-flash-lite`) or OpenAI (`gpt-4o-mini`).
    - Normalizes all detected values against strict PostgreSQL database check constraints.
 2. **Auto-Fill & User Review:**
    - Automatically populates the Add Clothing form with detected attributes.
@@ -96,4 +99,21 @@ Phase 3 introduces automatic visual recognition of uploaded clothing photos:
    - If AI is unavailable (no API key configured) or recognition fails, provides clear user notices and unlocks full manual entry.
 4. **Cloud & Local Persistence:**
    - Saves confirmed metadata and optimized photo to Supabase storage & database (or local storage in guest mode).
+
+---
+
+## Phase 4: AI Outfit Stylist Engine
+
+Phase 4 introduces intelligent outfit composition based on available wardrobe items:
+
+1. **Available Wardrobe Filtering:**
+   - Automatically ignores items marked as "In Laundry" or "Stored Away".
+2. **Gemini 3.8 Flash Personal Stylist:**
+   - Intelligently pairs tops, bottoms, footwear, and layers based on colors, patterns, and style cohesion.
+   - Prioritizes unworn items (`timesWorn === 0`) to maximize wardrobe utilization.
+   - Returns a Compatibility Score (85–99%) and a personalized Stylist Note explaining why the pieces match.
+3. **Graceful Offline Fallback:**
+   - Algorithmic color-harmony rule engine generates balanced outfits even when offline or without an API key.
+4. **Interactive Controls:**
+   - One-tap "Shuffle Look" / "New Combo" buttons with real-time styling loading indicators on both Home and Discover screens.
 
