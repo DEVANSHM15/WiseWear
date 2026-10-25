@@ -1,7 +1,7 @@
 # CodeRabbit Configuration File
 # Documentation: https://docs.coderabbit.ai/guides/configure-coderabbit
 
-version: "2"
+
 language: "en-US"
 
 reviews:
@@ -27,4 +27,4 @@ chat:
 
 knowledge_base:
   learnings:
-    enabled: true
+
