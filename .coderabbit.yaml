@@ -1,0 +1,30 @@
+# CodeRabbit Configuration File
+# Documentation: https://docs.coderabbit.ai/guides/configure-coderabbit
+
+version: "2"
+language: "en-US"
+
+reviews:
+  profile: "chill" # Constructive and concise feedback without nitpicking
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    ignore_title_keywords:
+      - "WIP"
+      - "draft"
+  path_filters:
+    - "!package-lock.json"
+    - "!assets/**"
+    - "!node_modules/**"
+    - "!.expo/**"
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  learnings:
+    enabled: true

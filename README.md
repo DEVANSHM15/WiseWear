@@ -75,6 +75,9 @@ node scripts/test-phase3.js
 # Automated Phase 4 test suite (AI Outfit Stylist & anti-repetition rules)
 node scripts/test-phase4.js
 
+# Automated Phase 5 test suite (Dynamic 7-day Planner & Wear Cycle Tracking)
+node scripts/test-phase5.js
+
 # TypeScript typecheck
 npx tsc --noEmit
 
@@ -116,4 +119,26 @@ Phase 4 introduces intelligent outfit composition based on available wardrobe it
    - Algorithmic color-harmony rule engine generates balanced outfits even when offline or without an API key.
 4. **Interactive Controls:**
    - One-tap "Shuffle Look" / "New Combo" buttons with real-time styling loading indicators on both Home and Discover screens.
+
+---
+
+## Phase 5: Intelligent 7-Day Outfit Planner & Wear Cycle Tracking
+
+Phase 5 turns the Planner tab into a dynamic weekly scheduling and wear-tracking engine:
+
+1. **Dynamic Real-World Calendar:**
+   - Computes live dates (Monday through Sunday) for the current week dynamically.
+   - Status indicators for `Planned`, `Worn`, and `Rest / Reset` days.
+2. **Anti-Repetition Multi-Day Scheduling:**
+   - Intelligently generates 7-day schedules with zero duplicate garment combinations.
+   - Actively rotates unworn pieces (`timesWorn === 0`) into the week.
+   - Designates Sundays as Wardrobe Rest & Reset days.
+3. **Single-Day Shuffle:**
+   - Allows users to re-roll just one day's outfit on the fly without regenerating the entire week.
+4. **Wear Cycle & Laundry Sync:**
+   - Tapping "Mark as Worn" increments `timesWorn` (+1), timestamps `lastWornDate`, and prompts to transition the pieces into the Laundry basket.
+   - Laundered pieces are instantly excluded from future outfit generation until washed and returned to the closet.
+5. **Local Persistence:**
+   - Persists the active weekly schedule to device storage across app launches.
+
 
