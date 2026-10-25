@@ -370,7 +370,14 @@ function parseJsonFromText(rawText: string): Record<string, unknown> {
 }
 
 /**
- * Call Google Gemini Vision API
+ * Sends JPEG base64 data to successive Gemini models and returns parsed metadata.
+ * Each fetch has a 12-second timeout until response headers arrive; individual
+ * request or parsing failures trigger the next model unless the external signal is aborted.
+ *
+ * @param base64Data - JPEG payload without a data URL prefix.
+ * @param signal - Cancels active fetches and is checked before each model attempt.
+ * @throws {Error} On external cancellation, or the last network, HTTP, empty-response,
+ * or parsing error after all models fail.
  */
 async function callGeminiVision(
   base64Data: string,
@@ -529,9 +536,15 @@ async function callOpenAIVision(
 }
 
 /**
- * Primary Vision Analysis entry point
- * Accepts base64 image data or URI. If API is not configured or fails,
- * returns useful diagnostic info without crashing so user can enter manually.
+ * Analyzes a garment with the configured Gemini or OpenAI provider and normalizes its metadata.
+ * Uses nonempty base64 data (raw or a data URL) in preference to fetching the image URI.
+ * Missing configuration returns success: false with isUnavailable: true; missing/unreadable
+ * images and provider, parsing, or cancellation failures return success: false with an error.
+ * These failures are returned for manual entry rather than propagated.
+ *
+ * @param params - Image source and optional timeoutMs in milliseconds. Omitted or zero
+ * timeoutMs uses 35,000 ms. The timer starts after image loading and aborts provider
+ * fetches; Gemini response-body reading can outlast it.
  */
 export async function analyzeClothingWithVision(params: {
   base64?: string;

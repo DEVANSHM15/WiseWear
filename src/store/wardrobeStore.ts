@@ -33,7 +33,12 @@ const STORAGE_WEEKLY_PLAN_KEY = '@wearwise_weekly_plan_v2';
 const DEMO_USER_ID = 'demo-user-wearwise-local';
 
 /**
- * Returns dynamic dates for the current week starting on Monday
+ * Returns seven entries, Monday through Sunday, for the week containing referenceDate.
+ * Weekday, day number, and month use local time; date uses UTC YYYY-MM-DD and isToday
+ * compares it with the current UTC date, independent of referenceDate. The input is unchanged.
+ *
+ * @throws {RangeError} If a generated date cannot be converted to ISO format, including
+ * when referenceDate is invalid.
  */
 export function getWeekDates(referenceDate: Date = new Date()): {
   date: string;
@@ -164,6 +169,11 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
   showOnlyNeverWorn: false,
   sortBy: 'recently_added',
 
+  /**
+   * Restores cached items and a nonempty weekly plan, then checks the Supabase session.
+   * Fetches remote items for an authenticated user; otherwise enables demo mode.
+   * Initialization failures are caught, retaining any state already restored.
+   */
   initializeWardrobe: async () => {
     try {
       // 1. Try loading cached items & plan from safeStorage
@@ -458,6 +468,13 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     }));
   },
 
+  /**
+   * Records a wear for an outfit found in outfits or todayOutfit; unknown IDs are ignored.
+   * Each call increments its wardrobe items' wear counts, updates timestamps, marks the
+   * outfit worn, and marks today (UTC) and any plan days with that outfit ID worn.
+   * Caches items and the plan and updates remote wear metadata in the background;
+   * persistence failures are ignored.
+   */
   markOutfitAsWorn: (outfitId) => {
     const todayStr = new Date().toISOString().split('T')[0];
     const state = get();
@@ -512,6 +529,12 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     safeStorage.setItem(STORAGE_WEEKLY_PLAN_KEY, JSON.stringify(updatedPlan)).catch(() => {});
   },
 
+  /**
+   * Generates an outfit while setting isGeneratingOutfit, then makes it today's outfit
+   * and prepends it to outfits, replacing any entry with the same ID.
+   * Returns the outfit, or null on insufficient available items or a caught failure,
+   * and clears the generation flag when the attempt finishes.
+   */
   generateAnotherOutfit: async () => {
     const { items } = get();
     set({ isGeneratingOutfit: true });
@@ -534,6 +557,13 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     }
   },
 
+  /**
+   * Replaces the current week's plan, rotating available tops and bottoms from least worn
+   * first, with optional footwear and layers. Combinations can repeat when options are limited.
+   * If a top or bottom is missing, cycles existing outfits without rechecking availability;
+   * days without an outfit and Sunday become rest days.
+   * Caches the plan in the background and ignores storage failures.
+   */
   generateWeeklyPlan: () => {
     const { items, outfits } = get();
     const availableItems = items.filter((i) => i.availabilityStatus === 'available');
@@ -637,6 +667,12 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     safeStorage.setItem(STORAGE_WEEKLY_PLAN_KEY, JSON.stringify(newWeeklyPlan)).catch(() => {});
   },
 
+  /**
+   * Replaces the outfit for a matching non-rest date (YYYY-MM-DD) with a random available
+   * top and bottom, resetting its status to planned even if previously worn.
+   * Leaves outfits unchanged when either category is missing or no eligible date matches.
+   * Caches the plan in the background and ignores storage failures.
+   */
   shuffleDayOutfit: (date: string) => {
     const { items, weeklyPlan } = get();
     const availableItems = items.filter((i) => i.availabilityStatus === 'available');
@@ -677,6 +713,10 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     safeStorage.setItem(STORAGE_WEEKLY_PLAN_KEY, JSON.stringify(updatedPlan)).catch(() => {});
   },
 
+  /**
+   * Marks matching plan entries for date (YYYY-MM-DD) worn without changing item wear counts.
+   * Caches the plan in the background and ignores storage failures.
+   */
   markDayAsWorn: (date: string) => {
     set((state) => {
       const updatedPlan = state.weeklyPlan.map((day) =>

@@ -23,6 +23,10 @@ import { useWardrobeStore } from '@/store/wardrobeStore';
 import { Colors, Radius, Spacing, Typography } from '@/theme/colors';
 import { DayPlan } from '@/types/wardrobe';
 
+/**
+ * Displays the weekly plan with generation, daily shuffle, wear, and laundry actions.
+ * Initially selects today's UTC date when present, otherwise the first plan entry.
+ */
 export default function PlannerScreen() {
   const weeklyPlan = useWardrobeStore((state) => state.weeklyPlan);
   const generateWeeklyPlan = useWardrobeStore(
@@ -45,6 +49,10 @@ export default function PlannerScreen() {
   const activeDay =
     weeklyPlan.find((day) => day.date === selectedDate) || weeklyPlan[0];
 
+  /**
+   * Marks the day worn and attempts wear tracking for its outfit. If an outfit is
+   * present, offers to move its items to laundry, starting updates without awaiting them.
+   */
   const handleMarkDayWorn = (day: DayPlan) => {
     markDayAsWorn(day.date);
     if (day.outfit) {

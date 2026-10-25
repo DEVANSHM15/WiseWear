@@ -16,6 +16,9 @@ import { Colors, Radius, Spacing, Typography } from '@/theme/colors';
 
 const LOOK_FILTERS = ['All Looks', 'Saved Looks'];
 
+/**
+ * Displays all or saved outfits whose items remain in the wardrobe, with generation controls.
+ */
 export default function DiscoverScreen() {
   const [activeFilter, setActiveFilter] = useState('All Looks');
 

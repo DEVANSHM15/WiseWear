@@ -25,7 +25,10 @@ function toGarmentSummary(item: ClothingItem) {
 }
 
 /**
- * Rule-based fallback matcher when offline or without API key
+ * Builds an unsaved, unworn outfit using only available items, without an API call.
+ * Pairs tops and bottoms, preferring unworn pieces; if either category is absent,
+ * uses a dress or the first two available items. Adds random footwear and outerwear when present.
+ * Returns null when fewer than two items are available; a dress can form a one-item outfit.
  */
 export function buildFallbackOutfit(items: ClothingItem[]): Outfit | null {
   const available = items.filter((i) => i.availabilityStatus === 'available');
@@ -74,7 +77,12 @@ export function buildFallbackOutfit(items: ClothingItem[]): Outfit | null {
 }
 
 /**
- * Call Gemini 3.8 Flash to intelligently curate an outfit from available items
+ * Requests an outfit from successive Gemini models using the supplied wardrobe items.
+ * Each fetch has an 8-second timeout until response headers arrive. Returns the first
+ * parsed response with at least two selected IDs; item membership is checked by the caller.
+ *
+ * @throws {Error} If all models fail or return no acceptable selection. Individual
+ * network, HTTP, and parsing failures are caught while trying the remaining models.
  */
 async function queryGeminiStylist(items: ClothingItem[], apiKey: string): Promise<AIStylistResponse> {
   const models = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
@@ -135,7 +143,10 @@ Respond with ONLY a JSON object:
 }
 
 /**
- * Main entry point: Generates an AI outfit with automated fallback
+ * Generates an unsaved, unworn outfit from available items, or null if fewer than two exist.
+ * Uses Gemini when configured; missing Gemini configuration, request/parsing failures,
+ * or fewer than two matched item IDs lead to the local rule-based fallback.
+ * Gemini failures are caught rather than propagated to the caller.
  */
 export async function generateAIOutfit(items: ClothingItem[]): Promise<Outfit | null> {
   const available = items.filter((i) => i.availabilityStatus === 'available');

@@ -28,6 +28,9 @@ import { StatCard } from '@/components/StatCard';
 import { useWardrobeStore } from '@/store/wardrobeStore';
 import { Colors, Radius, Spacing, Typography } from '@/theme/colors';
 
+/**
+ * Displays wardrobe statistics and today's outfit with add, save, wear, and shuffle actions.
+ */
 export default function HomeScreen() {
   const [modalVisible, setModalVisible] = useState(false);
 
