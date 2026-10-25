@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,13 +14,17 @@ import { OutfitCard } from '@/components/OutfitCard';
 import { useWardrobeStore } from '@/store/wardrobeStore';
 import { Colors, Radius, Spacing, Typography } from '@/theme/colors';
 
-const OCCASION_FILTERS = ['All Looks', 'Work / Studio', 'Casual & Weekend', 'Saved'];
+const LOOK_FILTERS = ['All Looks', 'Saved Looks'];
 
+/**
+ * Displays all or saved outfits whose items remain in the wardrobe, with generation controls.
+ */
 export default function DiscoverScreen() {
   const [activeFilter, setActiveFilter] = useState('All Looks');
 
   const items = useWardrobeStore((state) => state.items);
   const outfits = useWardrobeStore((state) => state.outfits);
+  const isGeneratingOutfit = useWardrobeStore((state) => state.isGeneratingOutfit);
   const saveOutfit = useWardrobeStore((state) => state.saveOutfit);
   const markOutfitAsWorn = useWardrobeStore((state) => state.markOutfitAsWorn);
   const generateAnotherOutfit = useWardrobeStore(
@@ -31,16 +36,7 @@ export default function DiscoverScreen() {
   );
 
   const filteredOutfits = validOutfits.filter((outfit) => {
-    if (activeFilter === 'Saved') return outfit.isSaved;
-    if (activeFilter === 'Work / Studio')
-      return outfit.occasion.toLowerCase().includes('office') ||
-        outfit.occasion.toLowerCase().includes('meeting') ||
-        outfit.styleVibe.toLowerCase().includes('smart');
-    if (activeFilter === 'Casual & Weekend')
-      return outfit.occasion.toLowerCase().includes('weekend') ||
-        outfit.occasion.toLowerCase().includes('stroll') ||
-        outfit.styleVibe.toLowerCase().includes('casual') ||
-        outfit.styleVibe.toLowerCase().includes('streetwear');
+    if (activeFilter === 'Saved Looks') return outfit.isSaved;
     return true;
   });
 
@@ -54,20 +50,24 @@ export default function DiscoverScreen() {
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={generateAnotherOutfit}
-            style={styles.generateBtn}>
-            <Wand2 size={15} color={Colors.textInverse} />
-            <Text style={styles.generateBtnText}>New Combo</Text>
+            disabled={isGeneratingOutfit}
+            style={[styles.generateBtn, isGeneratingOutfit && { opacity: 0.7 }]}>
+            {isGeneratingOutfit ? (
+              <ActivityIndicator size="small" color={Colors.textInverse} />
+            ) : (
+              <Wand2 size={15} color={Colors.textInverse} />
+            )}
+            <Text style={styles.generateBtnText}>
+              {isGeneratingOutfit ? 'Styling...' : 'New Combo'}
+            </Text>
           </TouchableOpacity>
         }
       />
 
-      {/* Occasion / Saved Filter Pills */}
+      {/* Filter Bar */}
       <View style={styles.filterBar}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterScroll}>
-          {OCCASION_FILTERS.map((filter) => {
+        <View style={styles.filterRow}>
+          {LOOK_FILTERS.map((filter) => {
             const isActive = activeFilter === filter;
             return (
               <TouchableOpacity
@@ -78,7 +78,7 @@ export default function DiscoverScreen() {
                   styles.filterPill,
                   isActive ? styles.filterPillActive : styles.filterPillInactive,
                 ]}>
-                {filter === 'Saved' && (
+                {filter === 'Saved Looks' && (
                   <Bookmark
                     size={13}
                     color={isActive ? Colors.textInverse : Colors.textSecondary}
@@ -95,7 +95,7 @@ export default function DiscoverScreen() {
               </TouchableOpacity>
             );
           })}
-        </ScrollView>
+        </View>
       </View>
 
       {/* Outfits List */}
@@ -170,9 +170,9 @@ const styles = StyleSheet.create({
   filterBar: {
     marginBottom: Spacing.sm,
   },
-  filterScroll: {
-    paddingHorizontal: Spacing.xl,
+  filterRow: {
     flexDirection: 'row',
+    paddingHorizontal: Spacing.xl,
     gap: Spacing.sm,
   },
   filterPill: {

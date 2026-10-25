@@ -6,9 +6,12 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
+/**
+ * Returns the dark color palette only for an explicit dark scheme; otherwise returns light.
+ */
 export function useTheme() {
   const scheme = useColorScheme();
-  const theme = scheme === 'unspecified' ? 'light' : scheme;
+  const theme = scheme === 'dark' ? 'dark' : 'light';
 
   return Colors[theme];
 }

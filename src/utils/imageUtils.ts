@@ -9,18 +9,17 @@ export interface ProcessedImage {
 }
 
 /**
- * Optimizes an image for digital wardrobe cataloging:
- * - Constrains maximum dimension to 1200px
- * - Converts to clean JPEG with 82% quality compression
- * - Preserves garment details while drastically reducing upload payload size
- * - Generates base64 string for direct ArrayBuffer decoding in mobile storage upload
+ * Resizes an image to 800 pixels wide, preserving aspect ratio, and saves a JPEG
+ * at 70% quality. Returns its local URI, resulting dimensions, and base64 data.
+ * On processing failure, returns the original URI with placeholder dimensions of
+ * 1200 by 1200 pixels and no base64 data; the processing error is caught.
  */
 export async function optimizeClothingImage(uri: string): Promise<ProcessedImage> {
   try {
     const manipResult = await ImageManipulator.manipulateAsync(
       uri,
-      [{ resize: { width: 1200 } }], // maintains aspect ratio automatically
-      { compress: 0.82, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+      [{ resize: { width: 800 } }], // maintains aspect ratio automatically
+      { compress: 0.70, format: ImageManipulator.SaveFormat.JPEG, base64: true }
     );
 
     return {

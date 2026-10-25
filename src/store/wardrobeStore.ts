@@ -26,9 +26,55 @@ import {
   WardrobeStats,
 } from '@/types/wardrobe';
 import { optimizeClothingImage } from '@/utils/imageUtils';
+import { buildFallbackOutfit, generateAIOutfit } from '@/services/aiStylistService';
 
 const STORAGE_CACHE_KEY = '@wearwise_wardrobe_items_v2';
+const STORAGE_WEEKLY_PLAN_KEY = '@wearwise_weekly_plan_v2';
 const DEMO_USER_ID = 'demo-user-wearwise-local';
+
+/**
+ * Returns seven entries, Monday through Sunday, for the week containing referenceDate.
+ * Weekday, day number, and month use local time; date uses UTC YYYY-MM-DD and isToday
+ * compares it with the current UTC date, independent of referenceDate. The input is unchanged.
+ *
+ * @throws {RangeError} If a generated date cannot be converted to ISO format, including
+ * when referenceDate is invalid.
+ */
+export function getWeekDates(referenceDate: Date = new Date()): {
+  date: string;
+  dayOfWeek: 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
+  dayNumber: number;
+  monthName: string;
+  isToday: boolean;
+}[] {
+  const d = new Date(referenceDate);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(d.setDate(diff));
+
+  const days: ('Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun')[] = [
+    'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun',
+  ];
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  return days.map((dayOfWeek, idx) => {
+    const cur = new Date(monday);
+    cur.setDate(monday.getDate() + idx);
+    const dateStr = cur.toISOString().split('T')[0];
+    return {
+      date: dateStr,
+      dayOfWeek,
+      dayNumber: cur.getDate(),
+      monthName: months[cur.getMonth()],
+      isToday: dateStr === todayStr,
+    };
+  });
+}
 
 function generateUUID(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -51,6 +97,7 @@ interface WardrobeState {
   // Status flags
   isLoading: boolean;
   isSubmitting: boolean;
+  isGeneratingOutfit: boolean;
   error: string | null;
   isDemoMode: boolean;
   sessionUser: { id: string; email?: string } | null;
@@ -77,8 +124,9 @@ interface WardrobeState {
   toggleLaundry: (id: string) => void;
   saveOutfit: (outfitId: string) => void;
   markOutfitAsWorn: (outfitId: string) => void;
-  generateAnotherOutfit: () => void;
+  generateAnotherOutfit: () => Promise<Outfit | null>;
   generateWeeklyPlan: () => void;
+  shuffleDayOutfit: (date: string) => void;
   markDayAsWorn: (date: string) => void;
   
   // Filter setters
@@ -98,67 +146,7 @@ interface WardrobeState {
 /**
  * Dynamically builds an outfit strictly from the user's available clothing items
  */
-export function buildOutfitFromItems(items: ClothingItem[]): Outfit | null {
-  const availableItems = items.filter(
-    (i) => i.availabilityStatus !== 'laundry' && i.availabilityStatus !== 'unavailable'
-  );
-  const pool = availableItems.length >= 2 ? availableItems : items;
-  if (pool.length < 2) return null;
-
-  const tops = pool.filter((i) => i.category === 'Shirts' || i.category === 'T-shirts');
-  const bottoms = pool.filter(
-    (i) => i.category === 'Trousers' || i.category === 'Jeans' || i.category === 'Shorts'
-  );
-  const dresses = pool.filter((i) => i.category === 'Dresses and ethnic wear');
-  const shoes = pool.filter((i) => i.category === 'Shoes and footwear');
-  const jackets = pool.filter((i) => i.category === 'Jackets and outerwear');
-
-  let combo: ClothingItem[] = [];
-
-  if (tops.length > 0 && bottoms.length > 0) {
-    const unwornTops = tops.filter((i) => i.timesWorn === 0);
-    const chosenTop =
-      unwornTops.length > 0
-        ? unwornTops[Math.floor(Math.random() * unwornTops.length)]
-        : tops[Math.floor(Math.random() * tops.length)];
-
-    const unwornBottoms = bottoms.filter((i) => i.timesWorn === 0);
-    const chosenBottom =
-      unwornBottoms.length > 0
-        ? unwornBottoms[Math.floor(Math.random() * unwornBottoms.length)]
-        : bottoms[Math.floor(Math.random() * bottoms.length)];
-
-    combo = [chosenTop, chosenBottom];
-  } else if (dresses.length > 0) {
-    combo = [dresses[Math.floor(Math.random() * dresses.length)]];
-  } else if (pool.length >= 2) {
-    combo = [pool[0], pool[1]];
-  } else {
-    return null;
-  }
-
-  if (shoes.length > 0) combo.push(shoes[Math.floor(Math.random() * shoes.length)]);
-  if (jackets.length > 0) combo.push(jackets[Math.floor(Math.random() * jackets.length)]);
-
-  const unwornCount = combo.filter((i) => i.timesWorn === 0).length;
-  const score = Math.min(99, 88 + unwornCount * 4 + Math.floor(Math.random() * 4));
-
-  return {
-    id: `outfit-curated-${Date.now()}`,
-    name: unwornCount > 0 ? 'Unworn Spotlight Look' : 'Curated Closet Harmony',
-    description: `Tailored ensemble pairing ${combo.map((c) => c.name).join(' and ')}.`,
-    items: combo,
-    compatibilityScore: score,
-    styleVibe: combo[0]?.style || 'Modern Minimalist',
-    occasion: 'Everyday Versatile',
-    isSaved: false,
-    isWorn: false,
-    stylistNote:
-      unwornCount > 0
-        ? `Prioritizes ${unwornCount} never-worn piece(s) in your wardrobe to increase your closet utilization!`
-        : `Balanced palette generated from your personal clothes.`,
-  };
-}
+export const buildOutfitFromItems = buildFallbackOutfit;
 
 export const useWardrobeStore = create<WardrobeState>((set, get) => ({
   items: [],
@@ -169,6 +157,7 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
 
   isLoading: false,
   isSubmitting: false,
+  isGeneratingOutfit: false,
   error: null,
   isDemoMode: !isSupabaseConfigured,
   sessionUser: null,
@@ -180,14 +169,27 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
   showOnlyNeverWorn: false,
   sortBy: 'recently_added',
 
+  /**
+   * Restores cached items and a nonempty weekly plan, then checks the Supabase session.
+   * Fetches remote items for an authenticated user; otherwise enables demo mode.
+   * Initialization failures are caught, retaining any state already restored.
+   */
   initializeWardrobe: async () => {
     try {
-      // 1. Try loading cached items from safeStorage
+      // 1. Try loading cached items & plan from safeStorage
       const cached = await safeStorage.getItem(STORAGE_CACHE_KEY);
       if (cached) {
         const parsed = JSON.parse(cached) as ClothingItem[];
         if (parsed.length > 0) {
           set({ items: parsed });
+        }
+      }
+
+      const cachedPlan = await safeStorage.getItem(STORAGE_WEEKLY_PLAN_KEY);
+      if (cachedPlan) {
+        const parsedPlan = JSON.parse(cachedPlan) as DayPlan[];
+        if (Array.isArray(parsedPlan) && parsedPlan.length > 0) {
+          set({ weeklyPlan: parsedPlan });
         }
       }
 
@@ -466,6 +468,13 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     }));
   },
 
+  /**
+   * Records a wear for an outfit found in outfits or todayOutfit; unknown IDs are ignored.
+   * Each call increments its wardrobe items' wear counts, updates timestamps, marks the
+   * outfit worn, and marks today (UTC) and any plan days with that outfit ID worn.
+   * Caches items and the plan and updates remote wear metadata in the background;
+   * persistence failures are ignored.
+   */
   markOutfitAsWorn: (outfitId) => {
     const todayStr = new Date().toISOString().split('T')[0];
     const state = get();
@@ -504,7 +513,7 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
         : state.todayOutfit;
 
     const updatedPlan = state.weeklyPlan.map((day) =>
-      day.date === '2026-10-13' || day.date === todayStr
+      day.date === todayStr || day.outfit?.id === outfitId
         ? { ...day, status: 'worn' as const }
         : day
     );
@@ -517,71 +526,205 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     });
 
     safeStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(updatedItems)).catch(() => {});
+    safeStorage.setItem(STORAGE_WEEKLY_PLAN_KEY, JSON.stringify(updatedPlan)).catch(() => {});
   },
 
-  generateAnotherOutfit: () => {
+  /**
+   * Generates an outfit while setting isGeneratingOutfit, then makes it today's outfit
+   * and prepends it to outfits, replacing any entry with the same ID.
+   * Returns the outfit, or null on insufficient available items or a caught failure,
+   * and clears the generation flag when the attempt finishes.
+   */
+  generateAnotherOutfit: async () => {
     const { items } = get();
-    const newGenerated = buildOutfitFromItems(items);
-    if (!newGenerated) return;
+    set({ isGeneratingOutfit: true });
+    try {
+      const newGenerated = await generateAIOutfit(items);
+      if (!newGenerated) {
+        set({ isGeneratingOutfit: false });
+        return null;
+      }
 
-    set((state) => ({
-      todayOutfit: newGenerated,
-      outfits: [newGenerated, ...state.outfits],
-    }));
+      set((state) => ({
+        isGeneratingOutfit: false,
+        todayOutfit: newGenerated,
+        outfits: [newGenerated, ...state.outfits.filter((o) => o.id !== newGenerated.id)],
+      }));
+      return newGenerated;
+    } catch {
+      set({ isGeneratingOutfit: false });
+      return null;
+    }
   },
 
+  /**
+   * Replaces the current week's plan, rotating available tops and bottoms from least worn
+   * first, with optional footwear and layers. Combinations can repeat when options are limited.
+   * If a top or bottom is missing, cycles existing outfits without rechecking availability;
+   * days without an outfit and Sunday become rest days.
+   * Caches the plan in the background and ignores storage failures.
+   */
   generateWeeklyPlan: () => {
-    const { outfits } = get();
-    const days: ('Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun')[] = [
-      'Mon',
-      'Tue',
-      'Wed',
-      'Thu',
-      'Fri',
-      'Sat',
-      'Sun',
-    ];
+    const { items, outfits } = get();
+    const availableItems = items.filter((i) => i.availabilityStatus === 'available');
+    const weekDays = getWeekDates();
 
-    const availableOutfits = [...outfits];
-    const newWeeklyPlan: DayPlan[] = days.map((day, idx) => {
-      const dayNum = 12 + idx;
-      const dateStr = `2026-10-${dayNum < 10 ? '0' + dayNum : dayNum}`;
+    const tops = availableItems.filter((i) => i.category === 'Shirts' || i.category === 'T-shirts');
+    const bottoms = availableItems.filter((i) => ['Trousers', 'Jeans', 'Shorts'].includes(i.category));
+    const layers = availableItems.filter((i) => i.category === 'Jackets and outerwear');
+    const shoes = availableItems.filter((i) => i.category === 'Shoes and footwear');
 
-      if (day === 'Sun') {
+    // Prioritize unworn items
+    const sortedTops = [...tops].sort((a, b) => a.timesWorn - b.timesWorn);
+    const sortedBottoms = [...bottoms].sort((a, b) => a.timesWorn - b.timesWorn);
+
+    const newWeeklyPlan: DayPlan[] = weekDays.map((dayInfo, idx) => {
+      // Sunday is rest / laundry reset day
+      if (dayInfo.dayOfWeek === 'Sun') {
         return {
-          date: dateStr,
-          dayOfWeek: day,
-          dayNumber: dayNum,
+          date: dayInfo.date,
+          dayOfWeek: dayInfo.dayOfWeek,
+          dayNumber: dayInfo.dayNumber,
           outfit: null,
-          status: 'rest' as const,
+          status: 'rest',
           notes: 'Wardrobe Reset & Clean Routine',
         };
       }
 
-      const assignedOutfit =
-        availableOutfits.length > 0
-          ? availableOutfits[idx % availableOutfits.length]
-          : null;
+      // If wardrobe has insufficient items to compose a custom top+bottom
+      if (sortedTops.length === 0 || sortedBottoms.length === 0) {
+        const fallbackOutfit = outfits[idx % (outfits.length || 1)] || null;
+        return {
+          date: dayInfo.date,
+          dayOfWeek: dayInfo.dayOfWeek,
+          dayNumber: dayInfo.dayNumber,
+          outfit: fallbackOutfit,
+          status: fallbackOutfit ? 'planned' : 'rest',
+          notes: fallbackOutfit ? 'Curated from saved looks' : 'Add clothes to plan look',
+        };
+      }
+
+      // Select distinct top and bottom for this day with offset so combos don't repeat
+      const top = sortedTops[idx % sortedTops.length];
+      const bottom = sortedBottoms[(idx + Math.floor(idx / sortedTops.length)) % sortedBottoms.length];
+
+      const outfitItems: ClothingItem[] = [top, bottom];
+      if (shoes.length > 0) {
+        outfitItems.push(shoes[idx % shoes.length]);
+      }
+      if (layers.length > 0 && idx % 2 === 0) {
+        outfitItems.push(layers[idx % layers.length]);
+      }
+
+      const hasUnworn = outfitItems.some((i) => i.timesWorn === 0);
+      let styleVibe = 'Smart Casual';
+      let occasion = 'Daily Wear';
+
+      if (dayInfo.dayOfWeek === 'Mon') {
+        styleVibe = 'Clean & Professional';
+        occasion = 'Week Kickoff';
+      } else if (dayInfo.dayOfWeek === 'Fri') {
+        styleVibe = 'Relaxed Casual';
+        occasion = 'Casual Friday';
+      } else if (dayInfo.dayOfWeek === 'Sat') {
+        styleVibe = 'Weekend Comfort';
+        occasion = 'Weekend Outing';
+      }
+
+      const outfitName = hasUnworn
+        ? `Rotation: ${top.color || top.primaryColor} Combo`
+        : `${styleVibe} Look`;
+
+      const score = 88 + ((idx * 3) % 11);
+
+      const dayOutfit: Outfit = {
+        id: `plan-outfit-${dayInfo.date}`,
+        name: outfitName,
+        description: `Curated ${styleVibe.toLowerCase()} look for ${dayInfo.dayOfWeek}.`,
+        items: outfitItems,
+        compatibilityScore: score,
+        styleVibe,
+        occasion,
+        isSaved: false,
+        isWorn: false,
+        lastWornDate: null,
+        stylistNote: hasUnworn
+          ? `Features unworn ${outfitItems.find((i) => i.timesWorn === 0)?.name}. Great balance of color and comfort.`
+          : `Cohesive pairing of ${top.name} with ${bottom.name}.`,
+      };
 
       return {
-        date: dateStr,
-        dayOfWeek: day,
-        dayNumber: dayNum,
-        outfit: assignedOutfit,
-        status: assignedOutfit ? (idx === 0 ? ('worn' as const) : ('planned' as const)) : ('rest' as const),
-        notes: assignedOutfit ? `Curated look focusing on ${assignedOutfit.styleVibe}` : 'Add clothes to plan look',
+        date: dayInfo.date,
+        dayOfWeek: dayInfo.dayOfWeek,
+        dayNumber: dayInfo.dayNumber,
+        outfit: dayOutfit,
+        status: 'planned',
+        notes: hasUnworn ? 'Unworn rotation look' : `${styleVibe} look`,
       };
     });
 
     set({ weeklyPlan: newWeeklyPlan });
+    safeStorage.setItem(STORAGE_WEEKLY_PLAN_KEY, JSON.stringify(newWeeklyPlan)).catch(() => {});
   },
 
+  /**
+   * Replaces the outfit for a matching non-rest date (YYYY-MM-DD) with a random available
+   * top and bottom, resetting its status to planned even if previously worn.
+   * Leaves outfits unchanged when either category is missing or no eligible date matches.
+   * Caches the plan in the background and ignores storage failures.
+   */
+  shuffleDayOutfit: (date: string) => {
+    const { items, weeklyPlan } = get();
+    const availableItems = items.filter((i) => i.availabilityStatus === 'available');
+    const tops = availableItems.filter((i) => i.category === 'Shirts' || i.category === 'T-shirts');
+    const bottoms = availableItems.filter((i) => ['Trousers', 'Jeans', 'Shorts'].includes(i.category));
+
+    if (tops.length === 0 || bottoms.length === 0) return;
+
+    // Pick random top & bottom
+    const randomTop = tops[Math.floor(Math.random() * tops.length)];
+    const randomBottom = bottoms[Math.floor(Math.random() * bottoms.length)];
+
+    const updatedPlan = weeklyPlan.map((day) => {
+      if (day.date !== date || day.status === 'rest') return day;
+
+      const newOutfit: Outfit = {
+        id: `plan-outfit-${date}-${Date.now()}`,
+        name: `Alternative ${randomTop.category} Look`,
+        description: `Shuffled combination for ${day.dayOfWeek}.`,
+        items: [randomTop, randomBottom],
+        compatibilityScore: 90 + Math.floor(Math.random() * 8),
+        styleVibe: 'Fresh Dynamic Combo',
+        occasion: 'Daily Rotation',
+        isSaved: false,
+        isWorn: false,
+        stylistNote: `Alternative pairing of ${randomTop.name} with ${randomBottom.name}.`,
+      };
+
+      return {
+        ...day,
+        outfit: newOutfit,
+        status: 'planned' as const,
+        notes: 'Custom shuffled look',
+      };
+    });
+
+    set({ weeklyPlan: updatedPlan });
+    safeStorage.setItem(STORAGE_WEEKLY_PLAN_KEY, JSON.stringify(updatedPlan)).catch(() => {});
+  },
+
+  /**
+   * Marks matching plan entries for date (YYYY-MM-DD) worn without changing item wear counts.
+   * Caches the plan in the background and ignores storage failures.
+   */
   markDayAsWorn: (date: string) => {
-    set((state) => ({
-      weeklyPlan: state.weeklyPlan.map((day) =>
+    set((state) => {
+      const updatedPlan = state.weeklyPlan.map((day) =>
         day.date === date ? { ...day, status: 'worn' as const } : day
-      ),
-    }));
+      );
+      safeStorage.setItem(STORAGE_WEEKLY_PLAN_KEY, JSON.stringify(updatedPlan)).catch(() => {});
+      return { weeklyPlan: updatedPlan };
+    });
   },
 
   setSearchQuery: (query) => set({ searchQuery: query }),

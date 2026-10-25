@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Alert,
   Image,
   ScrollView,
   StyleSheet,
@@ -13,6 +14,7 @@ import {
   CheckCircle2,
   Clock,
   Coffee,
+  RefreshCw,
   Sparkles,
   Wand2,
 } from 'lucide-react-native';
@@ -21,26 +23,56 @@ import { useWardrobeStore } from '@/store/wardrobeStore';
 import { Colors, Radius, Spacing, Typography } from '@/theme/colors';
 import { DayPlan } from '@/types/wardrobe';
 
+/**
+ * Displays the weekly plan with generation, daily shuffle, wear, and laundry actions.
+ * Initially selects today's UTC date when present, otherwise the first plan entry.
+ */
 export default function PlannerScreen() {
   const weeklyPlan = useWardrobeStore((state) => state.weeklyPlan);
   const generateWeeklyPlan = useWardrobeStore(
     (state) => state.generateWeeklyPlan
   );
+  const shuffleDayOutfit = useWardrobeStore((state) => state.shuffleDayOutfit);
   const markDayAsWorn = useWardrobeStore((state) => state.markDayAsWorn);
   const markOutfitAsWorn = useWardrobeStore((state) => state.markOutfitAsWorn);
-
-  // Active selected day in the 7-day strip
-  const [selectedDate, setSelectedDate] = useState<string>(
-    weeklyPlan[1]?.date || '2026-10-13' // Default to Tuesday
+  const setAvailabilityStatus = useWardrobeStore(
+    (state) => state.setAvailabilityStatus
   );
+
+  // Active selected day in the 7-day strip (defaults to today if present)
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    const todayMatch = weeklyPlan.find((day) => day.date === todayStr);
+    return todayMatch?.date || weeklyPlan[0]?.date || todayStr;
+  });
 
   const activeDay =
     weeklyPlan.find((day) => day.date === selectedDate) || weeklyPlan[0];
 
+  /**
+   * Marks the day worn and attempts wear tracking for its outfit. If an outfit is
+   * present, offers to move its items to laundry, starting updates without awaiting them.
+   */
   const handleMarkDayWorn = (day: DayPlan) => {
     markDayAsWorn(day.date);
     if (day.outfit) {
       markOutfitAsWorn(day.outfit.id);
+
+      Alert.alert(
+        'Move Items to Laundry?',
+        'Would you like to move these worn items to your Laundry basket so future outfit recommendations know they need washing?',
+        [
+          { text: 'Keep in Closet', style: 'cancel' },
+          {
+            text: 'Move to Laundry',
+            onPress: () => {
+              day.outfit?.items.forEach((item) => {
+                setAvailabilityStatus(item.id, 'laundry');
+              });
+            },
+          },
+        ]
+      );
     }
   };
 
@@ -74,7 +106,11 @@ export default function PlannerScreen() {
         </View>
 
         {/* 7-Day Calendar Strip */}
-        <Text style={styles.sectionLabel}>WEEK OF OCT 12 – OCT 18</Text>
+        <Text style={styles.sectionLabel}>
+          {weeklyPlan.length >= 7
+            ? `WEEK OF ${weeklyPlan[0].dayOfWeek.toUpperCase()} ${weeklyPlan[0].dayNumber} – ${weeklyPlan[6].dayOfWeek.toUpperCase()} ${weeklyPlan[6].dayNumber}`
+            : '7-DAY SCHEDULE'}
+        </Text>
         <View style={styles.calendarStrip}>
           {weeklyPlan.map((day) => {
             const isSelected = day.date === selectedDate;
@@ -149,7 +185,7 @@ export default function PlannerScreen() {
             <View style={styles.detailHeader}>
               <View>
                 <Text style={styles.detailDayTitle}>
-                  {activeDay.dayOfWeek}, October {activeDay.dayNumber}
+                  {activeDay.dayOfWeek}, Day {activeDay.dayNumber}
                 </Text>
                 <Text style={styles.detailNotes}>
                   {activeDay.notes || 'Curated daily wardrobe'}
@@ -240,31 +276,44 @@ export default function PlannerScreen() {
                   ))}
                 </View>
 
-                {/* Mark as worn button */}
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() => handleMarkDayWorn(activeDay)}
-                  disabled={activeDay.status === 'worn'}
-                  style={[
-                    styles.markWornButton,
-                    activeDay.status === 'worn' ? styles.markWornBtnDone : null,
-                  ]}>
-                  {activeDay.status === 'worn' ? (
-                    <>
-                      <CheckCircle2 size={16} color={Colors.success} />
-                      <Text style={styles.markWornBtnDoneText}>
-                        Marked as Worn for {activeDay.dayOfWeek}
-                      </Text>
-                    </>
-                  ) : (
-                    <>
-                      <Check size={16} color={Colors.textInverse} />
-                      <Text style={styles.markWornBtnText}>
-                        Mark this Outfit as Worn
-                      </Text>
-                    </>
+                {/* Action buttons */}
+                <View style={styles.buttonActionRow}>
+                  {activeDay.status !== 'worn' && (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => shuffleDayOutfit(activeDay.date)}
+                      style={styles.shuffleBtn}>
+                      <RefreshCw size={14} color={Colors.primary} />
+                      <Text style={styles.shuffleBtnText}>Shuffle Look</Text>
+                    </TouchableOpacity>
                   )}
-                </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => handleMarkDayWorn(activeDay)}
+                    disabled={activeDay.status === 'worn'}
+                    style={[
+                      styles.markWornButton,
+                      activeDay.status === 'worn' ? styles.markWornBtnDone : null,
+                      activeDay.status !== 'worn' ? { flex: 1, marginTop: 0 } : null,
+                    ]}>
+                    {activeDay.status === 'worn' ? (
+                      <>
+                        <CheckCircle2 size={16} color={Colors.success} />
+                        <Text style={styles.markWornBtnDoneText}>
+                          Marked as Worn for {activeDay.dayOfWeek}
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <Check size={16} color={Colors.textInverse} />
+                        <Text style={styles.markWornBtnText}>
+                          Mark as Worn
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
               </>
             )}
           </View>
@@ -599,6 +648,28 @@ const styles = StyleSheet.create({
   itemColorText: {
     fontSize: 10,
     color: Colors.textSecondary,
+  },
+  buttonActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  shuffleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md - 2,
+    borderRadius: Radius.round,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  shuffleBtnText: {
+    fontSize: Typography.fontSize.sm,
+    fontWeight: '600',
+    color: Colors.primary,
   },
   markWornButton: {
     flexDirection: 'row',
