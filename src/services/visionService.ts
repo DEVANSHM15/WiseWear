@@ -311,24 +311,21 @@ export function isVisionAIAvailable(): boolean {
 // Vision Analysis Core Function
 // -----------------------------------------------------------------------------
 
-const VISION_SYSTEM_PROMPT = `You are a precision fashion stylist and clothing classification vision AI.
-Analyze the garment shown in the photo and extract its attributes for a digital wardrobe catalog.
-
-You MUST respond with ONLY a valid, parseable JSON object matching this schema:
+const VISION_SYSTEM_PROMPT = `Precision fashion classifier. Analyze the garment in the photo.
+Respond with ONLY valid JSON matching this schema:
 {
-  "name": "Concise natural title (e.g. 'Crisp White Oxford Shirt', 'Raw Indigo Slim Jeans', 'Heather Grey Crewneck Tee')",
-  "category": "Must be one of: 'Shirts', 'T-shirts', 'Trousers', 'Jeans', 'Shorts', 'Jackets and outerwear', 'Dresses and ethnic wear', 'Shoes and footwear', 'Accessories'",
-  "subcategory": "Specific garment type (e.g. 'Oxford Button-Down', 'Graphic Tee', 'Chinos', 'Bomber Jacket', 'Running Shoes')",
-  "primaryColor": "Dominant color name with nuance (e.g. 'Navy Blue', 'Off-White', 'Charcoal Grey', 'Forest Green', 'Sand Beige', 'Burgundy')",
-  "secondaryColors": ["Secondary accent colors if any"],
-  "pattern": "Must be one of: 'plain', 'striped', 'checked', 'printed', 'other'",
-  "style": "Must be one of: 'casual', 'formal', 'sporty', 'ethnic', 'other'",
-  "season": "Must be one of: 'summer', 'winter', 'monsoon', 'all-season', 'other'",
-  "formality": Integer from 1 to 5 (1: Loungewear/Sleepwear, 2: Casual everyday, 3: Smart Casual, 4: Business Formal, 5: Black Tie),
-  "brand": "Visible brand name if clearly discernible on garment or tag, otherwise null",
-  "confidence": Float between 0.0 and 1.0
-}
-Do NOT include markdown formatting like \`\`\`json or explanatory text outside the JSON object.`;
+  "name": "Concise natural title (e.g. 'Crisp White Oxford Shirt', 'Indigo Slim Jeans', 'Grey Crewneck')",
+  "category": "One of: 'Shirts', 'T-shirts', 'Trousers', 'Jeans', 'Shorts', 'Jackets and outerwear', 'Dresses and ethnic wear', 'Shoes and footwear', 'Accessories'",
+  "subcategory": "Specific garment type (e.g. 'Button-Down', 'Graphic Tee', 'Chinos', 'Bomber Jacket')",
+  "primaryColor": "Dominant color name (e.g. 'Navy Blue', 'White', 'Charcoal Grey', 'Beige', 'Black')",
+  "secondaryColors": ["Accent colors if any"],
+  "pattern": "One of: 'plain', 'striped', 'checked', 'printed', 'other'",
+  "style": "One of: 'casual', 'formal', 'sporty', 'ethnic', 'other'",
+  "season": "One of: 'summer', 'winter', 'monsoon', 'all-season', 'other'",
+  "formality": Integer from 1 to 5 (1: lounge, 2: casual, 3: smart casual, 4: formal, 5: black tie),
+  "brand": "Visible brand name or null",
+  "confidence": Float 0.0 to 1.0
+}`;
 
 /**
  * Strip data:image/...;base64, header if present
@@ -370,18 +367,18 @@ function parseJsonFromText(rawText: string): Record<string, unknown> {
 }
 
 /**
- * Call Google Gemini Vision API
+ * Call Google Gemini Vision API using fastest available models and strict timeouts
  */
 async function callGeminiVision(
   base64Data: string,
   apiKey: string,
   signal: AbortSignal
 ): Promise<Record<string, unknown>> {
+  // Ordered by lowest latency: 3.1-flash-lite delivers ~2s response time
   const models = [
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
     'gemini-3.1-flash-lite',
-    'gemini-3.6-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-flash-lite-latest',
   ];
   let lastError: Error | null = null;
 
@@ -390,8 +387,9 @@ async function callGeminiVision(
       throw new Error('Vision AI request was cancelled or timed out.');
     }
 
+    // Snappy 4.5s per-model abort timer: never hang the user
     const perModelController = new AbortController();
-    const perModelTimeout = setTimeout(() => perModelController.abort(), 12000);
+    const perModelTimeout = setTimeout(() => perModelController.abort(), 4500);
 
     const onExternalAbort = () => perModelController.abort();
     signal.addEventListener('abort', onExternalAbort, { once: true });
@@ -416,8 +414,9 @@ async function callGeminiVision(
           },
         ],
         generationConfig: {
-          temperature: 0.15,
+          temperature: 0.1,
           responseMimeType: 'application/json',
+          maxOutputTokens: 250,
         },
       };
 
@@ -583,7 +582,7 @@ export async function analyzeClothingWithVision(params: {
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
-    params.timeoutMs || 35000 // 35 seconds timeout for slower mobile connections
+    params.timeoutMs || 8000 // 8 seconds maximum total: fast response or manual fallback
   );
 
   try {

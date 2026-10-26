@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -36,7 +36,7 @@ import {
   ClothingStyle,
   CreateClothingItemInput,
 } from '@/types/wardrobe';
-import { optimizeClothingImage } from '@/utils/imageUtils';
+import { createVisionThumbnail, optimizeClothingImage } from '@/utils/imageUtils';
 
 interface AddItemModalProps {
   visible: boolean;
@@ -160,10 +160,28 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
+  // AbortController ref to allow instant skipping / cancellation of AI vision requests
+  const visionAbortRef = useRef<AbortController | null>(null);
+
+  const cancelVisionAnalysis = () => {
+    if (visionAbortRef.current) {
+      visionAbortRef.current.abort();
+      visionAbortRef.current = null;
+    }
+    setIsAnalyzing(false);
+  };
+
   /**
-   * Run Vision AI recognition on an image
+   * Run Vision AI recognition on an image (optimized for 2-3s turnaround)
    */
   const runVisionAnalysis = async (uri: string, base64?: string) => {
+    // Abort any prior in-flight request
+    if (visionAbortRef.current) {
+      visionAbortRef.current.abort();
+    }
+    const abortCtrl = new AbortController();
+    visionAbortRef.current = abortCtrl;
+
     setIsAnalyzing(true);
     setErrorMessage('');
     setAiNotice(null);
@@ -184,7 +202,13 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
       const result = await analyzeClothingWithVision({
         base64: base64 || undefined,
         uri,
+        timeoutMs: 7000, // Snappy 7-second max cutoff
       });
+
+      // If user aborted/skipped while request was in-flight, ignore result
+      if (abortCtrl.signal.aborted) {
+        return;
+      }
 
       if (result.success && result.data) {
         // Automatically fill detected details into the form
@@ -201,7 +225,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
 
         setAiDetected(true);
         setAiNotice(
-          `✨ AI Identified: ${result.data.category} in ${result.data.primaryColor} (${result.data.pattern}, ${result.data.style}, ${result.data.season}). Review and edit any field below.`
+          `✨ AI Identified: ${result.data.category} in ${result.data.primaryColor} (${result.data.pattern}, ${result.data.style}). Review and edit below.`
         );
         setAiNoticeType('success');
       } else if (result.isUnavailable) {
@@ -219,32 +243,49 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
         setAiNoticeType('warning');
       }
     } catch (err: unknown) {
+      if (abortCtrl.signal.aborted) return;
       console.warn('[AddItemModal] Vision analysis failed:', err);
       setAiDetected(false);
       setAiNotice('AI recognition encountered an issue. You can enter all details manually below.');
       setAiNoticeType('warning');
     } finally {
+      if (visionAbortRef.current === abortCtrl) {
+        visionAbortRef.current = null;
+      }
       setIsAnalyzing(false);
     }
   };
 
   /**
-   * Process and optimize an image after picking/capturing
+   * Process and optimize an image after picking/capturing:
+   * Concurrently launches ~30ms thumbnail generation for instant ~2s Vision AI,
+   * while running full 800px catalog compression for storage in the background.
    */
   const handleImagePicked = async (uri: string) => {
     try {
       setSelectedImageUri(uri);
-      // Optimize image right away to get resized JPEG and base64
-      const optimized = await optimizeClothingImage(uri);
-      setSelectedImageUri(optimized.uri);
-      setCachedBase64(optimized.base64 || null);
 
-      // Trigger Vision AI analysis
-      await runVisionAnalysis(optimized.uri, optimized.base64);
+      // Start full-res storage optimization in background
+      const catalogOptimizePromise = optimizeClothingImage(uri).then((optimized) => {
+        setSelectedImageUri(optimized.uri);
+        setCachedBase64(optimized.base64 || null);
+        return optimized;
+      });
+
+      // Ultra-fast path: create 384px thumbnail in ~30ms and fire Vision AI immediately
+      const thumbBase64 = await createVisionThumbnail(uri);
+      if (thumbBase64) {
+        runVisionAnalysis(uri, thumbBase64);
+      } else {
+        // Fallback: wait for catalog optimization
+        const opt = await catalogOptimizePromise;
+        runVisionAnalysis(opt.uri, opt.base64);
+      }
+
+      await catalogOptimizePromise;
     } catch (err) {
       console.warn('[AddItemModal] Image optimization error:', err);
-      // Fallback: analyze original uri
-      await runVisionAnalysis(uri);
+      runVisionAnalysis(uri);
     }
   };
 
@@ -399,9 +440,12 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
               </Text>
             </View>
             <TouchableOpacity
-              onPress={onClose}
+              onPress={() => {
+                cancelVisionAnalysis();
+                onClose();
+              }}
               style={styles.closeBtn}
-              disabled={isUploading || isAnalyzing}>
+              disabled={isUploading}>
               <X size={20} color={Colors.text} />
             </TouchableOpacity>
           </View>
@@ -474,12 +518,18 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                     <View style={styles.analyzingContent}>
                       <View style={styles.analyzingTitleRow}>
                         <Sparkles size={16} color={Colors.accent} />
-                        <Text style={styles.analyzingTitle}>Vision AI Analyzing...</Text>
+                        <Text style={styles.analyzingTitle}>AI Auto-Detecting (~2s)...</Text>
                       </View>
                       <Text style={styles.analyzingSub}>
                         Identifying category, color, pattern, style & season
                       </Text>
                     </View>
+                    <TouchableOpacity
+                      style={styles.skipAiBtn}
+                      activeOpacity={0.8}
+                      onPress={cancelVisionAnalysis}>
+                      <Text style={styles.skipAiBtnText}>Skip / Enter Manually</Text>
+                    </TouchableOpacity>
                   </View>
                 )}
 
@@ -488,7 +538,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                   <View style={styles.previewActions}>
                     <TouchableOpacity
                       style={styles.changePhotoBtn}
-                      onPress={() => runVisionAnalysis(selectedImageUri, cachedBase64 || undefined)}>
+                      onPress={async () => {
+                        const thumb = await createVisionThumbnail(selectedImageUri);
+                        runVisionAnalysis(selectedImageUri, thumb || cachedBase64 || undefined);
+                      }}>
                       <Sparkles size={13} color={Colors.accent} />
                       <Text style={styles.changePhotoText}>Re-analyze</Text>
                     </TouchableOpacity>
@@ -1023,6 +1076,20 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSize.xs,
     color: 'rgba(255, 255, 255, 0.75)',
     textAlign: 'center',
+  },
+  skipAiBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: Radius.round,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+    marginTop: 4,
+  },
+  skipAiBtnText: {
+    fontSize: Typography.fontSize.xs,
+    fontWeight: '700',
+    color: Colors.textInverse,
   },
   previewActions: {
     position: 'absolute',

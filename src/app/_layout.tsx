@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { isFirebaseConfigured, onAuthChange } from '@/services/firebase';
 import { isSupabaseConfigured, supabase } from '@/services/supabase';
 import { useWardrobeStore } from '@/store/wardrobeStore';
 
@@ -12,7 +13,19 @@ export default function RootLayout() {
     // 1. Initialize local cache and check session
     initializeWardrobe();
 
-    // 2. Listen to Supabase auth state changes if configured
+    // 2. Listen to Firebase auth state changes if configured
+    if (isFirebaseConfigured) {
+      const unsubscribeFirebase = onAuthChange((user) => {
+        if (user) {
+          fetchClothingItems();
+        }
+      });
+      return () => {
+        unsubscribeFirebase();
+      };
+    }
+
+    // 3. Listen to Supabase auth state changes if configured
     if (isSupabaseConfigured && supabase) {
       const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
         if (session?.user) {

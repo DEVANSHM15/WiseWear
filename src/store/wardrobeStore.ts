@@ -15,6 +15,18 @@ import {
   uploadGarmentPhoto,
 } from '@/services/supabase';
 import {
+  deleteClothingItemFromFirestore,
+  deleteGarmentPhotoFromFirebase,
+  fetchUserClothingItemsFromFirestore,
+  firebaseAuth,
+  insertClothingItemToFirestore,
+  isFirebaseConfigured,
+  signInAsGuest,
+  signOutUser as signOutFirebase,
+  updateClothingItemInFirestore,
+  uploadGarmentPhotoToFirebase,
+} from '@/services/firebase';
+import {
   AvailabilityStatus,
   ClothingCategory,
   ClothingItem,
@@ -154,7 +166,7 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
   isSubmitting: false,
   isGeneratingOutfit: false,
   error: null,
-  isDemoMode: !isSupabaseConfigured,
+  isDemoMode: !isFirebaseConfigured && !isSupabaseConfigured,
   sessionUser: null,
 
   searchQuery: '',
@@ -183,7 +195,23 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
         }
       }
 
-      // 2. If Supabase is configured, check live auth session
+      // 2. If Firebase is configured, check session / anonymous guest
+      if (isFirebaseConfigured && firebaseAuth) {
+        let user = firebaseAuth.currentUser;
+        if (!user) {
+          user = await signInAsGuest().catch(() => null);
+        }
+        if (user) {
+          set({
+            isDemoMode: false,
+            sessionUser: { id: user.uid, email: user.email || undefined },
+          });
+          await get().fetchClothingItems();
+          return;
+        }
+      }
+
+      // 3. If Supabase is configured, check live auth session
       if (isSupabaseConfigured && supabase) {
         const { data: authData } = await supabase.auth.getSession();
         const user = authData.session?.user;
@@ -193,51 +221,61 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
             sessionUser: { id: user.id, email: user.email },
           });
           await get().fetchClothingItems();
-        } else {
-          set({ isDemoMode: true, sessionUser: null });
+          return;
         }
-      } else {
-        set({ isDemoMode: true, sessionUser: null });
       }
+
+      set({ isDemoMode: true, sessionUser: null });
     } catch (e) {
       console.warn('[store] Initialization warning:', e);
     }
   },
 
   fetchClothingItems: async () => {
-    if (!isSupabaseConfigured || !supabase) {
-      return;
-    }
-
     set({ isLoading: true, error: null });
 
     try {
-      const { data: authData } = await supabase.auth.getSession();
-      const user = authData.session?.user;
-
-      if (!user) {
-        set({ isDemoMode: true, sessionUser: null, isLoading: false });
+      // Priority 1: Firebase
+      if (isFirebaseConfigured && firebaseAuth?.currentUser) {
+        const user = firebaseAuth.currentUser;
+        set({ sessionUser: { id: user.uid, email: user.email || undefined } });
+        const remoteItems = await fetchUserClothingItemsFromFirestore(user.uid);
+        const generatedToday = buildOutfitFromItems(remoteItems);
+        set({
+          items: remoteItems,
+          isDemoMode: false,
+          isLoading: false,
+          todayOutfit: generatedToday,
+          outfits: generatedToday ? [generatedToday] : [],
+        });
+        await safeStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(remoteItems));
         return;
       }
 
-      set({
-        sessionUser: { id: user.id, email: user.email },
-      });
+      // Priority 2: Supabase
+      if (isSupabaseConfigured && supabase) {
+        const { data: authData } = await supabase.auth.getSession();
+        const user = authData.session?.user;
 
-      const remoteItems = await fetchUserClothingItems(user.id);
-      const generatedToday = buildOutfitFromItems(remoteItems);
-      set({
-        items: remoteItems,
-        isDemoMode: false,
-        isLoading: false,
-        todayOutfit: generatedToday,
-        outfits: generatedToday ? [generatedToday] : [],
-      });
-      
-      // Cache locally
-      await safeStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(remoteItems));
+        if (user) {
+          set({ sessionUser: { id: user.id, email: user.email } });
+          const remoteItems = await fetchUserClothingItems(user.id);
+          const generatedToday = buildOutfitFromItems(remoteItems);
+          set({
+            items: remoteItems,
+            isDemoMode: false,
+            isLoading: false,
+            todayOutfit: generatedToday,
+            outfits: generatedToday ? [generatedToday] : [],
+          });
+          await safeStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(remoteItems));
+          return;
+        }
+      }
+
+      set({ isDemoMode: true, sessionUser: null, isLoading: false });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to fetch items from Supabase';
+      const msg = err instanceof Error ? err.message : 'Failed to fetch items';
       set({ error: msg, isLoading: false });
     }
   },
@@ -247,6 +285,9 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
   },
 
   signOut: async () => {
+    if (isFirebaseConfigured) {
+      await signOutFirebase().catch(() => {});
+    }
     if (supabase) {
       await supabase.auth.signOut().catch(() => {});
     }
@@ -263,20 +304,59 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
   addClothingItem: async (input: CreateClothingItemInput): Promise<ClothingItem> => {
     set({ isSubmitting: true, error: null });
 
-    let uploadedPath = '';
+    let uploadedPath: string | null = null;
     const itemId = generateUUID();
 
     try {
       // 1. Optimize image (compress, resize to 1200px max, pre-calculate base64)
       const optimized = await optimizeClothingImage(input.imageUri);
 
-      // Check if Supabase configured & active user
+      // Priority 1: Firebase Storage & Firestore
+      if (isFirebaseConfigured && firebaseAuth?.currentUser) {
+        const userId = firebaseAuth.currentUser.uid;
+        const { storagePath, downloadUrl } = await uploadGarmentPhotoToFirebase(
+          userId,
+          itemId,
+          optimized.uri,
+          optimized.base64
+        );
+        uploadedPath = storagePath;
+
+        try {
+          const newItem = await insertClothingItemToFirestore(
+            userId,
+            itemId,
+            downloadUrl,
+            storagePath,
+            input
+          );
+
+          set((state) => {
+            const updated = [newItem, ...state.items];
+            safeStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(updated)).catch(() => {});
+            const nextToday = state.todayOutfit || buildOutfitFromItems(updated);
+            const nextOutfits =
+              nextToday && !state.outfits.some((o) => o.id === nextToday.id)
+                ? [nextToday, ...state.outfits]
+                : state.outfits;
+            return { items: updated, isSubmitting: false, todayOutfit: nextToday, outfits: nextOutfits };
+          });
+
+          return newItem;
+        } catch (dbErr) {
+          if (uploadedPath) {
+            await deleteGarmentPhotoFromFirebase(uploadedPath).catch(() => {});
+          }
+          throw dbErr;
+        }
+      }
+
+      // Priority 2: Supabase Storage & Postgres
       if (isSupabaseConfigured && supabase) {
         const { data: authData } = await supabase.auth.getSession();
         const userId = authData.session?.user.id;
 
         if (userId) {
-          // 2. Upload to Storage: user-id/item-id.jpg
           const { path, signedUrl } = await uploadGarmentPhoto(
             userId,
             itemId,
@@ -285,12 +365,10 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
           );
           uploadedPath = path;
 
-          // 3. Insert into Postgres
           try {
             const newItem = await insertClothingItem(userId, itemId, path, input);
             newItem.imageUrl = signedUrl;
 
-            // 4. Update local state
             set((state) => {
               const updated = [newItem, ...state.items];
               safeStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(updated)).catch(() => {});
@@ -304,7 +382,6 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
 
             return newItem;
           } catch (dbErr) {
-            // Clean up orphaned storage image if DB insert failed
             if (uploadedPath) {
               await deleteGarmentPhoto(uploadedPath).catch(() => {});
             }
@@ -370,6 +447,24 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     }
 
     try {
+      // Priority 1: Firebase
+      if (isFirebaseConfigured && firebaseAuth?.currentUser && target.userId && target.userId !== DEMO_USER_ID) {
+        await updateClothingItemInFirestore(target.userId, id, updates);
+        const updatedLocal: ClothingItem = {
+          ...target,
+          ...updates,
+          inLaundry: updates.availabilityStatus ? updates.availabilityStatus === 'laundry' : target.inLaundry,
+          updatedAt: new Date().toISOString(),
+        };
+        set((state) => {
+          const updated = state.items.map((i) => (i.id === id ? updatedLocal : i));
+          safeStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(updated)).catch(() => {});
+          return { items: updated, isSubmitting: false };
+        });
+        return updatedLocal;
+      }
+
+      // Priority 2: Supabase
       if (isSupabaseConfigured && supabase && target.userId && target.userId !== DEMO_USER_ID) {
         const updatedRemote = await updateClothingItemInDb(id, updates);
         set((state) => {
@@ -409,11 +504,15 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
     const target = previousItems.find((i) => i.id === id);
 
     try {
-      if (isSupabaseConfigured && supabase && target?.userId && target.userId !== DEMO_USER_ID) {
-        // Delete row in Postgres
+      // Priority 1: Firebase
+      if (isFirebaseConfigured && firebaseAuth?.currentUser && target?.userId && target.userId !== DEMO_USER_ID) {
+        await deleteClothingItemFromFirestore(target.userId, id);
+        if (target.imagePath) {
+          await deleteGarmentPhotoFromFirebase(target.imagePath);
+        }
+      } else if (isSupabaseConfigured && supabase && target?.userId && target.userId !== DEMO_USER_ID) {
+        // Priority 2: Supabase
         await deleteClothingItemFromDb(id);
-
-        // Delete storage photo if path exists
         if (target.imagePath) {
           await deleteGarmentPhoto(target.imagePath);
         }
@@ -473,7 +572,12 @@ export const useWardrobeStore = create<WardrobeState>((set, get) => ({
       if (itemIdsToUpdate.has(item.id)) {
         const nextTimes = item.timesWorn + 1;
         // Also fire background update
-        if (isSupabaseConfigured && supabase && item.userId && item.userId !== DEMO_USER_ID) {
+        if (isFirebaseConfigured && firebaseAuth?.currentUser && item.userId && item.userId !== DEMO_USER_ID) {
+          updateClothingItemInFirestore(item.userId, item.id, {
+            timesWorn: nextTimes,
+            lastWornAt: new Date().toISOString(),
+          }).catch(() => {});
+        } else if (isSupabaseConfigured && supabase && item.userId && item.userId !== DEMO_USER_ID) {
           updateClothingItemInDb(item.id, { timesWorn: nextTimes, lastWornAt: new Date().toISOString() }).catch(() => {});
         }
         return {

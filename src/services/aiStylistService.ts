@@ -77,7 +77,7 @@ export function buildFallbackOutfit(items: ClothingItem[]): Outfit | null {
  * Call Gemini 3.8 Flash to intelligently curate an outfit from available items
  */
 async function queryGeminiStylist(items: ClothingItem[], apiKey: string): Promise<AIStylistResponse> {
-  const models = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
+  const models = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
   const summary = items.map(toGarmentSummary);
 
   const prompt = `You are a world-class personal fashion stylist. 
@@ -102,7 +102,7 @@ Respond with ONLY a JSON object:
 
   for (const model of models) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 6000);
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const res = await fetch(url, {
@@ -110,7 +110,11 @@ Respond with ONLY a JSON object:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.3, responseMimeType: 'application/json' },
+          generationConfig: {
+            temperature: 0.2,
+            responseMimeType: 'application/json',
+            maxOutputTokens: 250,
+          },
         }),
         signal: controller.signal,
       });
