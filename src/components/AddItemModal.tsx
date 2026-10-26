@@ -202,7 +202,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
       const result = await analyzeClothingWithVision({
         base64: base64 || undefined,
         uri,
-        timeoutMs: 7000, // Snappy 7-second max cutoff
+        timeoutMs: 18000,
       });
 
       // If user aborted/skipped while request was in-flight, ignore result
@@ -518,7 +518,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                     <View style={styles.analyzingContent}>
                       <View style={styles.analyzingTitleRow}>
                         <Sparkles size={16} color={Colors.accent} />
-                        <Text style={styles.analyzingTitle}>AI Auto-Detecting (~2s)...</Text>
+                        <Text style={styles.analyzingTitle}>AI Auto-Detecting...</Text>
                       </View>
                       <Text style={styles.analyzingSub}>
                         Identifying category, color, pattern, style & season

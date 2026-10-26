@@ -367,102 +367,93 @@ function parseJsonFromText(rawText: string): Record<string, unknown> {
 }
 
 /**
- * Call Google Gemini Vision API using fastest available models and strict timeouts
+ * Single model request runner with signal abort support
+ */
+async function callSingleGeminiModel(
+  model: string,
+  base64Data: string,
+  apiKey: string,
+  signal: AbortSignal
+): Promise<Record<string, unknown>> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const payload = {
+    contents: [
+      {
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: base64Data,
+            },
+          },
+          {
+            text: VISION_SYSTEM_PROMPT,
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: 'application/json',
+      maxOutputTokens: 250,
+    },
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(
+      `Gemini API HTTP ${response.status} (${model}): ${errorText || response.statusText}`
+    );
+  }
+
+  const resJson = await response.json();
+  const rawText = resJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  if (!rawText) {
+    throw new Error(`Gemini (${model}) returned an empty response.`);
+  }
+
+  return parseJsonFromText(rawText);
+}
+
+/**
+ * Call Google Gemini Vision API:
+ * Concurrently races the top fast models ('gemini-3.1-flash-lite' and 'gemini-flash-lite-latest')
+ * with Promise.any so if one model hits a 503 spike or network stall, the other completes immediately.
  */
 async function callGeminiVision(
   base64Data: string,
   apiKey: string,
   signal: AbortSignal
 ): Promise<Record<string, unknown>> {
-  // Ordered by lowest latency: 3.1-flash-lite delivers ~2s response time
-  const models = [
-    'gemini-3.1-flash-lite',
-    'gemini-3.5-flash-lite',
-    'gemini-flash-lite-latest',
-  ];
-  let lastError: Error | null = null;
+  if (signal.aborted) {
+    throw new Error('Vision AI request was cancelled or timed out.');
+  }
 
-  for (const model of models) {
+  const raceModels = ['gemini-3.1-flash-lite', 'gemini-flash-lite-latest'];
+
+  try {
+    const winner = await Promise.any(
+      raceModels.map((model) => callSingleGeminiModel(model, base64Data, apiKey, signal))
+    );
+    return winner;
+  } catch (raceErr) {
+    console.warn('[visionService] Primary model race failed, trying fallback:', raceErr);
     if (signal.aborted) {
       throw new Error('Vision AI request was cancelled or timed out.');
     }
-
-    // Snappy 4.5s per-model abort timer: never hang the user
-    const perModelController = new AbortController();
-    const perModelTimeout = setTimeout(() => perModelController.abort(), 4500);
-
-    const onExternalAbort = () => perModelController.abort();
-    signal.addEventListener('abort', onExternalAbort, { once: true });
-
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-      const payload = {
-        contents: [
-          {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: 'image/jpeg',
-                  data: base64Data,
-                },
-              },
-              {
-                text: VISION_SYSTEM_PROMPT,
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: 'application/json',
-          maxOutputTokens: 250,
-        },
-      };
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        signal: perModelController.signal,
-      });
-
-      clearTimeout(perModelTimeout);
-      signal.removeEventListener('abort', onExternalAbort);
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
-        throw new Error(
-          `Gemini API HTTP ${response.status} (${model}): ${errorText || response.statusText}`
-        );
-      }
-
-      const resJson = await response.json();
-      const rawText =
-        resJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-      if (!rawText) {
-        throw new Error(`Gemini (${model}) returned an empty response.`);
-      }
-
-      return parseJsonFromText(rawText);
-    } catch (err: unknown) {
-      clearTimeout(perModelTimeout);
-      signal.removeEventListener('abort', onExternalAbort);
-
-      if (signal.aborted) {
-        throw new Error('Vision AI request was cancelled or timed out.');
-      }
-
-      lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(`[visionService] Model ${model} failed, trying next:`, lastError.message);
-      continue;
-    }
+    // Fallback to gemini-3.5-flash-lite if both parallel requests fail
+    return await callSingleGeminiModel('gemini-3.5-flash-lite', base64Data, apiKey, signal);
   }
-
-  throw lastError || new Error('All Gemini model endpoints failed.');
 }
 
 /**
@@ -582,7 +573,7 @@ export async function analyzeClothingWithVision(params: {
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
-    params.timeoutMs || 8000 // 8 seconds maximum total: fast response or manual fallback
+    params.timeoutMs || 18000 // 18 seconds total timeout for image encoding + inference
   );
 
   try {
