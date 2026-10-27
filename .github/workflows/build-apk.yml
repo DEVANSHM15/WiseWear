@@ -44,6 +44,11 @@ jobs:
       - name: 🔍 Lint code
         run: npm run lint
 
+      - name: 🔗 Link EAS Project
+        run: eas init --account devanshm15 --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
       - name: 📱 Build Android APK on EAS Cloud
         run: |
           eas build --platform android --profile preview --non-interactive --wait --json > build-report.json
