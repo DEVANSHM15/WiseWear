@@ -1,17 +1,22 @@
-name: Build Android APK
+name: Build and Release Android APK
 
 on:
   push:
-    branches:
-      - main
-      - Phase6-Firebase
     tags:
-      - 'v*'
-  workflow_dispatch: # Allows you to manually trigger a build anytime from GitHub UI
+      - 'v*' # Triggers on release tags like v1.0.0, v1.0.1, etc.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write # Allows GitHub Actions to create releases and upload the APK
 
 jobs:
-  build:
-    name: Test & Build APK
+  build-and-release:
+    name: Build & Publish Release APK
     runs-on: ubuntu-latest
 
     steps:
@@ -23,6 +28,15 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
+
+      - name: ☕ Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 🤖 Setup Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: 📦 Install dependencies
         run: npm ci
@@ -39,6 +53,34 @@ jobs:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
-      - name: 📱 Build APK in EAS Cloud
+      - name: 📱 Build APK locally on runner
         run: |
-          eas build --platform android --profile preview --non-interactive
+          npx eas-cli build \
+            --platform android \
+            --profile preview \
+            --local \
+            --non-interactive \
+            --output=./WearWise.apk
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: 🏷 Determine Release Tag
+        id: release_info
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "TAG=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🚀 Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.TAG }}
+          name: WearWise ${{ steps.release_info.outputs.TAG }}
+          files: ./WearWise.apk
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
