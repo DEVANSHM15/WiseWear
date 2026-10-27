@@ -3,7 +3,7 @@ name: Build and Release Android APK
 on:
   push:
     tags:
-      - 'v*' # Triggers on release tags like v1.0.0, v1.0.1, etc.
+      - 'v*' # Triggered on release tags like v1.0.0, v1.0.1, etc.
   workflow_dispatch:
     inputs:
       version:
@@ -12,10 +12,10 @@ on:
         default: 'v1.0.0'
 
 permissions:
-  contents: write # Allows GitHub Actions to create releases and upload the APK
+  contents: write # Required to create a GitHub Release and upload assets
 
 jobs:
-  build-and-release:
+  eas-build-and-release:
     name: Build & Publish Release APK
     runs-on: ubuntu-latest
 
@@ -26,17 +26,14 @@ jobs:
       - name: 🟢 Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: 20.x
+          cache: npm
 
-      - name: ☕ Setup Java JDK 17
-        uses: actions/setup-java@v4
+      - name: 🚀 Setup Expo and EAS CLI
+        uses: expo/expo-github-action@v8
         with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: 🤖 Setup Android SDK
-        uses: android-actions/setup-android@v3
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
 
       - name: 📦 Install dependencies
         run: npm ci
@@ -47,22 +44,25 @@ jobs:
       - name: 🔍 Lint code
         run: npm run lint
 
-      - name: 🚀 Setup Expo & EAS CLI
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: 📱 Build APK locally on runner
+      - name: 📱 Build Android APK on EAS Cloud
         run: |
-          npx eas-cli build \
-            --platform android \
-            --profile preview \
-            --local \
-            --non-interactive \
-            --output=./WearWise.apk
+          eas build --platform android --profile preview --non-interactive --wait --json > build-report.json
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: 📥 Parse and Download APK
+        id: parse-build
+        run: |
+          cat build-report.json
+          BUILD_STATUS=$(jq -r '.[0].status // .status' build-report.json)
+          if [ "$BUILD_STATUS" != "FINISHED" ]; then
+            echo "EAS Build failed with status: $BUILD_STATUS"
+            exit 1
+          fi
+
+          APK_URL=$(jq -r '.[0].artifacts.applicationArchiveUrl // .[0].artifacts.buildUrl // .artifacts.applicationArchiveUrl // .artifacts.buildUrl' build-report.json)
+          echo "Downloading APK from: $APK_URL"
+          curl -L --fail "$APK_URL" -o WearWise.apk
 
       - name: 🏷 Determine Release Tag
         id: release_info
@@ -73,12 +73,12 @@ jobs:
             echo "TAG=${{ github.ref_name }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: 🚀 Publish to GitHub Releases
+      - name: 🚀 Create GitHub Release & Upload APK
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_info.outputs.TAG }}
           name: WearWise ${{ steps.release_info.outputs.TAG }}
-          files: ./WearWise.apk
+          files: WearWise.apk
           draft: false
           prerelease: false
           generate_release_notes: true
