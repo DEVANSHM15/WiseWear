@@ -1,0 +1,44 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - Phase6-Firebase
+    tags:
+      - 'v*'
+  workflow_dispatch: # Allows you to manually trigger a build anytime from GitHub UI
+
+jobs:
+  build:
+    name: Test & Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🏗 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🔍 Typecheck code
+        run: npx tsc --noEmit
+
+      - name: 🔍 Lint code
+        run: npm run lint
+
+      - name: 🚀 Setup Expo & EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: 📱 Build APK in EAS Cloud
+        run: |
+          eas build --platform android --profile preview --non-interactive
